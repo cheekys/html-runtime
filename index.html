@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0e14" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="运行环境" />
+<title>HTML 运行环境</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-1: #11151d;
+    --bg-2: #171d29;
+    --border: #232a36;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #4c8dff;
+    --danger: #ff5f57;
+    --warn: #f0b429;
+    --ok: #3fb950;
+  }
+
+  * { box-sizing: border-box; }
+
+  [hidden] { display: none !important; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  button { font-family: inherit; }
+
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 8px rgba(63, 185, 80, 0.8);
+  }
+
+  .brand-text {
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .topbar-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+
+  .btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    color: var(--text);
+    font-size: 13px;
+    padding: 7px 11px;
+    border-radius: 9px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .btn:active { transform: scale(0.96); background: #1d2432; }
+
+  .btn.primary {
+    background: var(--accent);
+    border-color: transparent;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .btn.primary:active { background: #3d7df0; }
+
+  /* ---------- 工作区 ---------- */
+  .workspace {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  /* ---------- 编辑器 ---------- */
+  .tabbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .tab.active { background: var(--bg-2); color: var(--text); }
+
+  .save-hint {
+    margin-left: auto;
+    padding-right: 4px;
+    font-size: 11px;
+    color: #4a5568;
+    white-space: nowrap;
+  }
+
+  #editor {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    outline: none;
+    resize: none;
+    background: var(--bg);
+    color: var(--text);
+    /* 16px 是 iOS 的分水岭：更小会导致聚焦时页面自动放大 */
+    font-size: 16px;
+    line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 12px;
+    tab-size: 2;
+    -webkit-appearance: none;
+    border-radius: 0;
+  }
+
+  /* ---------- 预览 ---------- */
+  .preview-pane {
+    position: relative;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .frame-host {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+  }
+
+  .frame-host iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+  }
+
+  .placeholder {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 13px;
+    padding: 24px;
+    text-align: center;
+    line-height: 1.7;
+  }
+
+  .placeholder strong { color: var(--text); font-size: 15px; }
+
+  .preview-pane.immersive {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    width: 100vw;
+    height: 100dvh;
+    flex: none;
+  }
+
+  .immersive-exit {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: 10px;
+    z-index: 10;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  /* ---------- 移动端切换 ---------- */
+  .viewswitch {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--bg-1);
+    border-top: 1px solid var(--border);
+  }
+
+  .viewswitch button {
+    flex: 1;
+    appearance: none;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 0;
+    border-radius: 9px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .viewswitch button.active {
+    background: var(--bg-2);
+    color: var(--text);
+    border-color: #2c3648;
+  }
+
+  /* ---------- 控制台 ---------- */
+  .console {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-1);
+    border-top: 1px solid var(--border);
+  }
+
+  .console-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    touch-action: manipulation;
+  }
+
+  .console-title { font-weight: 600; color: #aab6c6; }
+
+  .pill {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-2);
+    color: var(--muted);
+  }
+
+  .pill.danger { background: rgba(255, 95, 87, 0.15); color: var(--danger); }
+
+  .flex-1 { flex: 1; }
+
+  .link {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 2px 5px;
+    cursor: pointer;
+  }
+
+  .link:active { color: var(--text); }
+
+  .chev { width: 14px; text-align: center; }
+
+  .console-body {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    max-height: 34vh;
+    padding: 0 12px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .console-empty { margin: 4px 0; color: #4a5568; }
+
+  .log { display: flex; gap: 6px; padding: 3px 0; }
+
+  .log-mark { flex: 0 0 auto; opacity: 0.9; }
+
+  .log-text { min-width: 0; white-space: pre-wrap; word-break: break-word; }
+
+  .log[data-level="log"] .log-text { color: #c9d1d9; }
+  .log[data-level="debug"] .log-text { color: #7d8899; }
+  .log[data-level="info"] .log-text { color: #6cb0ff; }
+  .log[data-level="warn"] .log-text { color: var(--warn); }
+  .log[data-level="error"] .log-text { color: #ff8f87; }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 70px);
+    transform: translateX(-50%) translateY(8px);
+    background: rgba(30, 38, 52, 0.96);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s, transform 0.18s;
+    z-index: 200;
+    white-space: nowrap;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ---------- 宽屏 ---------- */
+  @media (min-width: 900px) {
+    .workspace { flex-direction: row; }
+    .pane { flex: 1 1 50%; }
+    .preview-pane { border-left: 1px solid var(--border); }
+    .viewswitch { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <span class="brand-text">HTML 运行环境</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn" id="resetBtn">重置</button>
+      <button class="btn" id="fullBtn">全屏</button>
+      <button class="btn primary" id="runBtn">运行</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="pane" id="editorPane">
+      <div class="tabbar">
+        <button class="tab active" data-tab="html">HTML</button>
+        <button class="tab" data-tab="css">CSS</button>
+        <button class="tab" data-tab="js">JS</button>
+        <span class="save-hint" id="saveHint">已保存</span>
+      </div>
+      <textarea
+        id="editor"
+        spellcheck="false"
+        autocapitalize="off"
+        autocorrect="off"
+        autocomplete="off"
+        aria-label="代码编辑器"
+      ></textarea>
+    </section>
+
+    <section class="pane preview-pane" id="previewPane">
+      <div class="frame-host" id="frameHost"></div>
+      <button class="immersive-exit" id="exitBtn" hidden aria-label="退出全屏">✕</button>
+    </section>
+  </main>
+
+  <div class="viewswitch" id="viewSwitch">
+    <button class="active" data-view="code">代码</button>
+    <button data-view="preview">预览</button>
+  </div>
+
+  <section class="console">
+    <div class="console-head" id="consoleHead">
+      <span class="console-title">控制台</span>
+      <span class="pill" id="logCount" hidden>0</span>
+      <span class="pill danger" id="errCount" hidden>0 错误</span>
+      <span class="flex-1"></span>
+      <button class="link" id="backupBtn">备份</button>
+      <button class="link" id="clearBtn">清空</button>
+      <span class="chev" id="chev">▸</span>
+    </div>
+    <div class="console-body" id="consoleBody" hidden>
+      <p class="console-empty">还没有输出。代码里的 console.log 和运行错误会显示在这里。</p>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var STORAGE_KEY = 'html-runtime:code:v1';
+  var RUN_DELAY = 900;
+  var SAVE_DELAY = 400;
+  var MAX_LOGS = 300;
+
+  /* ================= 注入到运行环境的桥接脚本 ================= */
+  var BRIDGE = String.raw`
+(function () {
+  if (window.__RUNTIME_BRIDGE__) return;
+  window.__RUNTIME_BRIDGE__ = true;
+
+  function post(type, payload) {
+    try {
+      parent.postMessage(Object.assign({ __runtime: 1, type: type }, payload || {}), '*');
+    } catch (e) {}
+  }
+
+  function fmt(value, depth) {
+    depth = depth || 0;
+    try {
+      if (value === null) return 'null';
+      if (value === undefined) return 'undefined';
+      var t = typeof value;
+      if (t === 'string') return value;
+      if (t === 'number' || t === 'boolean' || t === 'bigint') return String(value);
+      if (t === 'function') return '[Function ' + (value.name || 'anonymous') + ']';
+      if (t === 'symbol') return value.toString();
+      if (value instanceof Error) return value.name + ': ' + value.message;
+      if (typeof Element !== 'undefined' && value instanceof Element) {
+        var raw = value.outerHTML || '';
+        return raw.length > 300 ? raw.slice(0, 300) + '…' : raw;
+      }
+      if (depth > 2) return Array.isArray(value) ? '[Array]' : '[Object]';
+
+      var seen = [];
+      var json = JSON.stringify(value, function (k, v) {
+        if (typeof v === 'function') return '[Function]';
+        if (typeof v === 'bigint') return String(v) + 'n';
+        if (v && typeof v === 'object') {
+          if (seen.indexOf(v) !== -1) return '[Circular]';
+          seen.push(v);
+        }
+        return v;
+      });
+      return json === undefined ? String(value) : json;
+    } catch (e) {
+      return '[无法序列化]';
+    }
+  }
+
+  var levels = ['log', 'info', 'warn', 'error', 'debug'];
+  for (var i = 0; i < levels.length; i++) {
+    (function (level) {
+      var original = console[level] ? console[level].bind(console) : function () {};
+      console[level] = function () {
+        var parts = [];
+        for (var j = 0; j < arguments.length; j++) parts.push(fmt(arguments[j], 0));
+        post('console', { level: level, args: parts.join(' ') });
+        original.apply(console, arguments);
+      };
+    })(levels[i]);
+  }
+
+  window.addEventListener('error', function (e) {
+    var target = e.target;
+    if (target && target !== window && target.tagName) {
+      post('console', {
+        level: 'error',
+        args: '资源加载失败：<' + target.tagName.toLowerCase() + '> ' + (target.src || target.href || '')
+      });
+      return;
+    }
+    var message = e.message || '未知错误';
+    var where = e.lineno
+      ? '（第 ' + e.lineno + ' 行' + (e.colno ? '，第 ' + e.colno + ' 列' : '') + '）'
+      : '';
+    post('console', { level: 'error', args: message + where });
+  }, true);
+
+  window.addEventListener('unhandledrejection', function (e) {
+    post('console', { level: 'error', args: '未捕获的 Promise 异常：' + fmt(e.reason) });
+  });
+
+  post('ready');
+})();
+`;
+
+  /* ================= 沙箱策略 ================= */
+  var SANDBOX = [
+    'allow-scripts',
+    'allow-same-origin',
+    'allow-forms',
+    'allow-modals',
+    'allow-popups',
+    'allow-pointer-lock',
+    'allow-downloads'
+  ].join(' ');
+
+  /* ================= 初始示例 ================= */
+  var DEFAULT_CODE = {
+    html: '<canvas id="stage"></canvas>',
+    css: [
+      'html, body {',
+      '  height: 100%;',
+      '  margin: 0;',
+      '  overflow: hidden;',
+      '  background: radial-gradient(circle at 30% 20%, #141b2b, #0b0e14 70%);',
+      '}',
+      '',
+      '#stage {',
+      '  display: block;',
+      '  width: 100%;',
+      '  height: 100%;',
+      '}'
+    ].join('\n'),
+    js: [
+      "const canvas = document.getElementById('stage')",
+      'const ctx = canvas.getContext("2d")',
+      '',
+      'let W = 0',
+      'let H = 0',
+      '',
+      'function resize() {',
+      '  const dpr = Math.min(window.devicePixelRatio || 1, 2)',
+      '  W = canvas.clientWidth',
+      '  H = canvas.clientHeight',
+      '  canvas.width = W * dpr',
+      '  canvas.height = H * dpr',
+      '  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)',
+      '}',
+      '',
+      "window.addEventListener('resize', resize)",
+      'resize()',
+      '',
+      'const ball = { x: W / 2, y: H / 2, vx: 3.2, vy: 2.6, r: 28 }',
+      '',
+      'function frame() {',
+      '  ball.x += ball.vx',
+      '  ball.y += ball.vy',
+      '',
+      '  if (ball.x - ball.r < 0 || ball.x + ball.r > W) ball.vx *= -1',
+      '  if (ball.y - ball.r < 0 || ball.y + ball.r > H) ball.vy *= -1',
+      '',
+      '  ctx.clearRect(0, 0, W, H)',
+      '',
+      '  const gradient = ctx.createLinearGradient(0, 0, W, H)',
+      '  gradient.addColorStop(0, "#4c8dff")',
+      '  gradient.addColorStop(1, "#a06bff")',
+      '',
+      '  ctx.fillStyle = gradient',
+      '  ctx.beginPath()',
+      '  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2)',
+      '  ctx.fill()',
+      '',
+      '  requestAnimationFrame(frame)',
+      '}',
+      '',
+      'requestAnimationFrame(frame)',
+      "console.log('运行环境就绪，画布 ' + W + '×' + H)"
+    ].join('\n')
+  };
+
+  /* ================= 状态 ================= */
+  var state = { html: '', css: '', js: '' };
+  var currentTab = 'html';
+  var currentWindow = null;
+  var immersive = false;
+  var mobileView = 'code';
+  var restored = false;
+  var runTimer = null;
+  var saveTimer = null;
+  var toastTimer = null;
+  var logTotal = 0;
+  var errorTotal = 0;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var editor = $('editor');
+  var editorPane = $('editorPane');
+  var previewPane = $('previewPane');
+  var frameHost = $('frameHost');
+  var viewSwitch = $('viewSwitch');
+  var consoleHead = $('consoleHead');
+  var consoleBody = $('consoleBody');
+  var logCountEl = $('logCount');
+  var errCountEl = $('errCount');
+  var chevEl = $('chev');
+  var saveHint = $('saveHint');
+  var exitBtn = $('exitBtn');
+  var toastEl = $('toast');
+  var tabButtons = document.querySelectorAll('.tab');
+
+  /* ================= 文档构建 ================= */
+  function buildDocument(code) {
+    var css = String(code.css || '').replace(/<\/style/gi, '<\\/style');
+    var js = String(code.js || '').replace(/<\/script/gi, '<\\/script');
+
+    return '<!doctype html>\n' +
+      '<html lang="zh-CN">\n' +
+      '<head>\n' +
+      '<meta charset="utf-8">\n' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n' +
+      '<link rel="icon" href="data:,">\n' +
+      '<script>' + BRIDGE + '<\/script>\n' +
+      '<style>\nhtml, body { margin: 0; }\n' + css + '\n</style>\n' +
+      '</head>\n' +
+      '<body>\n' + (code.html || '') + '\n' +
+      '<script>\n' + js + '\n<\/script>\n' +
+      '</body>\n' +
+      '</html>';
+  }
+
+  /* ================= 运行 ================= */
+  function run() {
+    clearTimeout(runTimer);
+
+    var iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox', SANDBOX);
+    iframe.setAttribute('allow', 'autoplay; fullscreen; gamepad; clipboard-write');
+    iframe.setAttribute('referrerpolicy', 'no-referrer');
+    iframe.setAttribute('title', '运行预览');
+    iframe.srcdoc = buildDocument(state);
+
+    frameHost.replaceChildren(iframe);
+    currentWindow = iframe.contentWindow;
+    clearLogs();
+  }
+
+  function scheduleRun() {
+    clearTimeout(runTimer);
+    runTimer = setTimeout(run, RUN_DELAY);
+  }
+
+  /* ================= 控制台 ================= */
+  var MARK = { log: '', debug: '', info: 'ℹ ', warn: '⚠ ', error: '✖ ' };
+
+  function updatePills() {
+    logCountEl.hidden = logTotal === 0;
+    logCountEl.textContent = String(logTotal);
+    errCountEl.hidden = errorTotal === 0;
+    errCountEl.textContent = errorTotal + ' 错误';
+  }
+
+  function appendLog(level, text) {
+    var nearBottom = true;
+    if (!consoleBody.hidden) {
+      nearBottom =
+        consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 48;
+    }
+
+    var empty = consoleBody.querySelector('.console-empty');
+    if (empty) empty.remove();
+
+    var row = document.createElement('div');
+    row.className = 'log';
+    row.setAttribute('data-level', level);
+
+    var mark = document.createElement('span');
+    mark.className = 'log-mark';
+    mark.textContent = MARK[level] || '';
+
+    var body = document.createElement('span');
+    body.className = 'log-text';
+    body.textContent = text.length > 2000 ? text.slice(0, 2000) + '…' : text;
+
+    row.appendChild(mark);
+    row.appendChild(body);
+    consoleBody.appendChild(row);
+
+    while (consoleBody.children.length > MAX_LOGS) {
+      consoleBody.removeChild(consoleBody.firstChild);
+    }
+
+    logTotal += 1;
+    if (level === 'error') {
+      errorTotal += 1;
+      setConsoleOpen(true);
+    }
+    updatePills();
+
+    if (!consoleBody.hidden && nearBottom) {
+      consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
+  }
+
+  function clearLogs() {
+    consoleBody.textContent = '';
+    var empty = document.createElement('p');
+    empty.className = 'console-empty';
+    empty.textContent = '还没有输出。代码里的 console.log 和运行错误会显示在这里。';
+    consoleBody.appendChild(empty);
+    logTotal = 0;
+    errorTotal = 0;
+    updatePills();
+  }
+
+  function setConsoleOpen(open) {
+    consoleBody.hidden = !open;
+    chevEl.textContent = open ? '▾' : '▸';
+  }
+
+  /* ================= 存储 ================= */
+  function load() {
+    var saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    } catch (e) {
+      saved = null;
+    }
+    if (saved && typeof saved.html === 'string') {
+      state.html = saved.html;
+      state.css = typeof saved.css === 'string' ? saved.css : '';
+      state.js = typeof saved.js === 'string' ? saved.js : '';
+      restored = true;
+    } else {
+      state.html = DEFAULT_CODE.html;
+      state.css = DEFAULT_CODE.css;
+      state.js = DEFAULT_CODE.js;
+    }
+  }
+
+  function scheduleSave() {
+    saveHint.textContent = '未保存';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        saveHint.textContent = '已保存';
+      } catch (e) {
+        saveHint.textContent = '保存失败';
+      }
+    }, SAVE_DELAY);
+  }
+
+  function copyBackup() {
+    var payload = JSON.stringify(state);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(payload).then(
+        function () { toast('全部代码已复制到剪贴板'); },
+        function () { toast('复制失败，请手动选择文本'); }
+      );
+    } else {
+      toast('当前环境不支持剪贴板');
+    }
+  }
+
+  /* ================= 界面 ================= */
+  function toast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      toastEl.classList.remove('show');
+    }, 1800);
+  }
+
+  function isWide() {
+    return window.innerWidth >= 900;
+  }
+
+  function updateLayout() {
+    var wide = isWide();
+    var showEditor = wide || (mobileView === 'code' && !immersive);
+    var showPreview = wide || mobileView === 'preview' || immersive;
+
+    editorPane.hidden = !showEditor;
+    previewPane.hidden = !showPreview;
+    previewPane.classList.toggle('immersive', immersive);
+    exitBtn.hidden = !immersive;
+    viewSwitch.hidden = wide || immersive;
+
+    var buttons = viewSwitch.querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle('active', buttons[i].getAttribute('data-view') === mobileView);
+    }
+  }
+
+  function showPlaceholder() {
+    var box = document.createElement('div');
+    box.className = 'placeholder';
+    var title = document.createElement('strong');
+    title.textContent = '上次的代码已恢复';
+    var desc = document.createElement('div');
+    desc.textContent = '为了安全起见不会自动运行。点右上角「运行」即可预览。';
+    box.appendChild(title);
+    box.appendChild(desc);
+    frameHost.replaceChildren(box);
+    currentWindow = null;
+  }
+
+  function setTab(tab) {
+    state[currentTab] = editor.value;
+    currentTab = tab;
+    editor.value = state[tab];
+    for (var i = 0; i < tabButtons.length; i++) {
+      tabButtons[i].classList.toggle('active', tabButtons[i].getAttribute('data-tab') === tab);
+    }
+    editor.focus();
+  }
+
+  /* ================= 事件 ================= */
+  editor.addEventListener('input', function () {
+    state[currentTab] = editor.value;
+    scheduleSave();
+    scheduleRun();
+  });
+
+  editor.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    var start = editor.selectionStart;
+    var end = editor.selectionEnd;
+    editor.value = editor.value.slice(0, start) + '  ' + editor.value.slice(end);
+    editor.selectionStart = editor.selectionEnd = start + 2;
+    state[currentTab] = editor.value;
+    scheduleSave();
+  });
+
+  for (var i = 0; i < tabButtons.length; i++) {
+    (function (btn) {
+      btn.addEventListener('click', function () {
+        setTab(btn.getAttribute('data-tab'));
+      });
+    })(tabButtons[i]);
+  }
+
+  $('runBtn').addEventListener('click', function () {
+    run();
+    if (!isWide()) {
+      mobileView = 'preview';
+      updateLayout();
+    }
+  });
+
+  $('fullBtn').addEventListener('click', function () {
+    immersive = !immersive;
+    if (immersive && !isWide()) mobileView = 'preview';
+    updateLayout();
+  });
+
+  exitBtn.addEventListener('click', function () {
+    immersive = false;
+    updateLayout();
+  });
+
+  $('resetBtn').addEventListener('click', function () {
+    if (!window.confirm('确定恢复初始示例吗？当前代码会被覆盖。')) return;
+    state.html = DEFAULT_CODE.html;
+    state.css = DEFAULT_CODE.css;
+    state.js = DEFAULT_CODE.js;
+    editor.value = state[currentTab];
+    scheduleSave();
+    run();
+    toast('已恢复初始示例');
+  });
+
+  consoleHead.addEventListener('click', function (e) {
+    if (e.target.closest('button')) return;
+    setConsoleOpen(consoleBody.hidden);
+  });
+
+  $('clearBtn').addEventListener('click', function (e) {
+    e.stopPropagation();
+    clearLogs();
+  });
+
+  $('backupBtn').addEventListener('click', function (e) {
+    e.stopPropagation();
+    copyBackup();
+  });
+
+  viewSwitch.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    mobileView = btn.getAttribute('data-view');
+    updateLayout();
+  });
+
+  window.addEventListener('resize', updateLayout);
+  window.addEventListener('orientationchange', function () {
+    setTimeout(updateLayout, 120);
+  });
+
+  window.addEventListener('message', function (event) {
+    if (!currentWindow || event.source !== currentWindow) return;
+    var data = event.data;
+    if (!data || data.__runtime !== 1) return;
+    if (data.type === 'console') {
+      appendLog(data.level || 'log', String(data.args || ''));
+    }
+  });
+
+  /* ================= 启动 ================= */
+  load();
+  editor.value = state[currentTab];
+  setConsoleOpen(false);
+  updateLayout();
+
+  if (restored) {
+    saveHint.textContent = '已恢复';
+    showPlaceholder();
+  } else {
+    saveHint.textContent = '已保存';
+    run();
+  }
+})();
+</script>
+</body>
+</html>
