@@ -15,12 +15,11 @@
 
 <div class="app">
   <header class="topbar">
-    <div class="brand">
-      <span class="dot"></span>
-      <span class="brand-text">HTML 运行环境</span>
-    </div>
+    <button class="project-btn" id="projectBtn" aria-label="切换项目">
+      <span class="project-name" id="projectName">加载中…</span>
+      <span class="caret">▾</span>
+    </button>
     <div class="topbar-actions">
-      <button class="btn" id="clearAllBtn">清空</button>
       <button class="btn" id="fullBtn">全屏</button>
       <button class="btn primary" id="runBtn">运行</button>
     </div>
@@ -32,7 +31,7 @@
         <button class="tab active" data-tab="html">HTML</button>
         <button class="tab" data-tab="css">CSS</button>
         <button class="tab" data-tab="js">JS</button>
-        <span class="save-hint" id="saveHint">空白项目</span>
+        <span class="save-hint" id="saveHint">已保存</span>
       </div>
       <textarea
         id="editor"
@@ -63,7 +62,6 @@
       <span class="pill" id="logCount" hidden>0</span>
       <span class="pill danger" id="errCount" hidden>0 错误</span>
       <span class="flex-1"></span>
-      <button class="link" id="backupBtn">备份</button>
       <button class="link" id="clearBtn">清空</button>
       <span class="chev" id="chev">▸</span>
     </div>
@@ -73,8 +71,42 @@
   </section>
 </div>
 
+<!-- 项目列表 -->
+<div class="sheet" id="projectSheet" hidden>
+  <div class="sheet-backdrop" data-close="projectSheet"></div>
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <span class="sheet-title">项目</span>
+      <button class="link" data-close="projectSheet">关闭</button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn" id="newProjectBtn">＋ 新建</button>
+      <button class="btn" id="importBtn">导入 HTML</button>
+      <input type="file" id="fileInput" accept=".html,.htm,text/html" hidden />
+    </div>
+    <div class="project-list" id="projectList"></div>
+  </div>
+</div>
+
+<!-- 项目操作 -->
+<div class="sheet" id="actionSheet" hidden>
+  <div class="sheet-backdrop" data-close="actionSheet"></div>
+  <div class="sheet-panel compact">
+    <div class="sheet-head">
+      <span class="sheet-title" id="actionTitle">项目</span>
+      <button class="link" data-close="actionSheet">取消</button>
+    </div>
+    <button class="sheet-item" id="renameBtn">重命名</button>
+    <button class="sheet-item" id="exportBtn">导出单文件 HTML</button>
+    <button class="sheet-item" id="copyHtmlBtn">复制 HTML 代码</button>
+    <button class="sheet-item" id="copyJsonBtn">复制 JSON 备份</button>
+    <button class="sheet-item danger" id="deleteBtn">删除项目</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<script src="./store.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
