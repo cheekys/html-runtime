@@ -1,14 +1,15 @@
 /* ============================================================
-   运行环境 · 逻辑
+   运行环境 · 逻辑（M2：多项目 + IndexedDB）
    ============================================================ */
 
 (function () {
   'use strict';
 
-  var STORAGE_KEY = 'html-runtime:code:v1';
+  var Store = window.HRStore;
   var RUN_DELAY = 900;
   var SAVE_DELAY = 400;
   var MAX_LOGS = 300;
+  var LAST_KEY = 'html-runtime:last-project';
 
   /* ================= 注入到运行环境的桥接脚本 ================= */
   var BRIDGE = String.raw`
@@ -103,21 +104,20 @@
     'allow-downloads'
   ].join(' ');
 
-  /* ================= 空白项目 ================= */
-  var EMPTY_CODE = { html: '', css: '', js: '' };
-
   /* ================= 状态 ================= */
+  var projects = [];
+  var current = null;
   var state = { html: '', css: '', js: '' };
   var currentTab = 'html';
   var currentWindow = null;
   var immersive = false;
   var mobileView = 'code';
-  var restored = false;
   var runTimer = null;
   var saveTimer = null;
   var toastTimer = null;
   var logTotal = 0;
   var errorTotal = 0;
+  var actionTarget = null;
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -134,11 +134,16 @@
   var saveHint = $('saveHint');
   var exitBtn = $('exitBtn');
   var toastEl = $('toast');
+  var projectNameEl = $('projectName');
+  var projectListEl = $('projectList');
+  var projectSheet = $('projectSheet');
+  var actionSheet = $('actionSheet');
+  var actionTitleEl = $('actionTitle');
+  var fileInput = $('fileInput');
   var tabButtons = document.querySelectorAll('.tab');
 
   /* ================= 文档构建 ================= */
   function buildDocument(code) {
-    // 用户代码里如果出现 </script> 或 </style>，会提前闭合标签，必须转义
     var css = String(code.css || '').replace(/<\/style/gi, '<\\/style');
     var js = String(code.js || '').replace(/<\/script/gi, '<\\/script');
 
@@ -254,55 +259,161 @@
     chevEl.textContent = open ? '▾' : '▸';
   }
 
-  /* ================= 存储 ================= */
-  function load() {
-    var saved = null;
-    try {
-      saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    } catch (e) {
-      saved = null;
-    }
+  /* ================= 保存 ================= */
+  function persist() {
+    if (!current) return;
+    current.html = state.html;
+    current.css = state.css;
+    current.js = state.js;
+    current.updatedAt = Date.now();
 
-    var hasContent =
-      saved &&
-      typeof saved.html === 'string' &&
-      Boolean(saved.html || saved.css || saved.js);
-
-    if (hasContent) {
-      state.html = saved.html;
-      state.css = typeof saved.css === 'string' ? saved.css : '';
-      state.js = typeof saved.js === 'string' ? saved.js : '';
-      restored = true;
-    } else {
-      state.html = EMPTY_CODE.html;
-      state.css = EMPTY_CODE.css;
-      state.js = EMPTY_CODE.js;
-    }
+    saveHint.textContent = '保存中…';
+    Store.putProject(current)
+      .then(function () {
+        saveHint.textContent = '已保存';
+        var replaced = false;
+        for (var i = 0; i < projects.length; i++) {
+          if (projects[i].id === current.id) {
+            projects[i] = current;
+            replaced = true;
+            break;
+          }
+        }
+        if (!replaced) projects.unshift(current);
+      })
+      .catch(function () {
+        saveHint.textContent = '保存失败';
+      });
   }
 
   function scheduleSave() {
     saveHint.textContent = '未保存';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        saveHint.textContent = '已保存';
-      } catch (e) {
-        saveHint.textContent = '保存失败';
-      }
+      saveTimer = null;
+      persist();
     }, SAVE_DELAY);
   }
 
-  function copyBackup() {
-    var payload = JSON.stringify(state);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(payload).then(
-        function () { toast('全部代码已复制到剪贴板'); },
-        function () { toast('复制失败，请手动选择文本'); }
-      );
-    } else {
-      toast('当前环境不支持剪贴板');
+  function flushSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      persist();
     }
+  }
+
+  /* ================= 项目 ================= */
+  function updateTabButtons() {
+    for (var i = 0; i < tabButtons.length; i++) {
+      tabButtons[i].classList.toggle('active', tabButtons[i].getAttribute('data-tab') === currentTab);
+    }
+  }
+
+  function openProject(project, autoRun) {
+    current = project;
+    state.html = project.html || '';
+    state.css = project.css || '';
+    state.js = project.js || '';
+    currentTab = 'html';
+    editor.value = state.html;
+    updateTabButtons();
+    projectNameEl.textContent = project.name;
+
+    try {
+      localStorage.setItem(LAST_KEY, project.id);
+    } catch (e) {}
+
+    var hasContent = Boolean(state.html || state.css || state.js);
+    if (autoRun && hasContent) {
+      run();
+    } else if (hasContent) {
+      showRestoredHint();
+    } else {
+      showBlank();
+    }
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '—';
+    var d = new Date(ts);
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return (d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function sizeLabel(project) {
+    var bytes = (project.html || '').length + (project.css || '').length + (project.js || '').length;
+    if (bytes < 1024) return bytes + ' B';
+    return (bytes / 1024).toFixed(1) + ' KB';
+  }
+
+  function renderProjects() {
+    projectListEl.textContent = '';
+
+    if (!projects.length) {
+      var empty = document.createElement('p');
+      empty.className = 'project-empty';
+      empty.textContent = '还没有项目。点上面的「新建」开始。';
+      projectListEl.appendChild(empty);
+      return;
+    }
+
+    projects.forEach(function (project) {
+      var row = document.createElement('div');
+      row.className = 'project-row';
+      if (current && project.id === current.id) row.classList.add('active');
+
+      var meta = document.createElement('div');
+      meta.className = 'project-meta';
+
+      var name = document.createElement('div');
+      name.className = 'project-row-name';
+      name.textContent = project.name;
+
+      var sub = document.createElement('div');
+      sub.className = 'project-row-sub';
+      sub.textContent = formatTime(project.updatedAt) + ' · ' + sizeLabel(project);
+
+      meta.appendChild(name);
+      meta.appendChild(sub);
+
+      var more = document.createElement('button');
+      more.className = 'more-btn';
+      more.textContent = '⋯';
+      more.setAttribute('aria-label', '更多操作');
+      more.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openActions(project);
+      });
+
+      row.appendChild(meta);
+      row.appendChild(more);
+      row.addEventListener('click', function () {
+        switchTo(project);
+      });
+
+      projectListEl.appendChild(row);
+    });
+  }
+
+  function switchTo(project) {
+    closeSheet('projectSheet');
+    if (current && current.id === project.id) return;
+    flushSave();
+    Store.getProject(project.id).then(function (full) {
+      openProject(full || project, true);
+    });
+  }
+
+  function openActions(project) {
+    actionTarget = project;
+    actionTitleEl.textContent = project.name;
+    actionSheet.hidden = false;
+  }
+
+  function closeSheet(id) {
+    var el = $(id);
+    if (el) el.hidden = true;
   }
 
   /* ================= 界面 ================= */
@@ -340,9 +451,9 @@
     var box = document.createElement('div');
     box.className = 'placeholder';
     var title = document.createElement('strong');
-    title.textContent = '上次的代码已恢复';
+    title.textContent = '项目已加载';
     var desc = document.createElement('div');
-    desc.textContent = '为了安全起见不会自动运行。点右上角「运行」即可预览。';
+    desc.textContent = '点右上角「运行」查看效果。';
     box.appendChild(title);
     box.appendChild(desc);
     frameHost.replaceChildren(box);
@@ -361,13 +472,11 @@
     state[currentTab] = editor.value;
     currentTab = tab;
     editor.value = state[tab];
-    for (var i = 0; i < tabButtons.length; i++) {
-      tabButtons[i].classList.toggle('active', tabButtons[i].getAttribute('data-tab') === tab);
-    }
+    updateTabButtons();
     editor.focus();
   }
 
-  /* ================= 事件 ================= */
+  /* ================= 事件：编辑器 ================= */
   editor.addEventListener('input', function () {
     state[currentTab] = editor.value;
     scheduleSave();
@@ -393,6 +502,7 @@
     })(tabButtons[i]);
   }
 
+  /* ================= 事件：运行 / 全屏 ================= */
   $('runBtn').addEventListener('click', function () {
     run();
     if (!isWide()) {
@@ -412,21 +522,143 @@
     updateLayout();
   });
 
-  $('clearAllBtn').addEventListener('click', function () {
-    if (!window.confirm('确定清空所有代码吗？此操作不可撤销。')) return;
-    state.html = '';
-    state.css = '';
-    state.js = '';
-    editor.value = state[currentTab];
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {}
-    saveHint.textContent = '空白项目';
-    clearLogs();
-    showBlank();
-    toast('已清空');
+  /* ================= 事件：项目列表 ================= */
+  $('projectBtn').addEventListener('click', function () {
+    renderProjects();
+    projectSheet.hidden = false;
   });
 
+  $('newProjectBtn').addEventListener('click', function () {
+    var name = window.prompt('项目名称', '新项目');
+    if (name === null) return;
+    name = String(name).trim() || '未命名项目';
+    flushSave();
+    Store.createProject(name).then(function (project) {
+      projects.unshift(project);
+      closeSheet('projectSheet');
+      openProject(project, false);
+      toast('已创建「' + name + '」');
+    });
+  });
+
+  $('importBtn').addEventListener('click', function () {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', function () {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed = Store.parseHtmlFile(String(reader.result || ''));
+      var name = file.name.replace(/\.(html?|HTML?)$/, '') || '导入项目';
+      flushSave();
+      Store.createProject(name, parsed).then(function (project) {
+        projects.unshift(project);
+        closeSheet('projectSheet');
+        openProject(project, true);
+        toast('已导入「' + name + '」');
+      });
+    };
+    reader.onerror = function () {
+      toast('文件读取失败');
+    };
+    reader.readAsText(file);
+    fileInput.value = '';
+  });
+
+  /* ================= 事件：项目操作 ================= */
+  $('renameBtn').addEventListener('click', function () {
+    if (!actionTarget) return;
+    var name = window.prompt('新名称', actionTarget.name);
+    if (name === null) return;
+    name = String(name).trim() || actionTarget.name;
+    actionTarget.name = name;
+    actionTarget.updatedAt = Date.now();
+
+    Store.putProject(actionTarget).then(function () {
+      if (current && current.id === actionTarget.id) {
+        current.name = name;
+        projectNameEl.textContent = name;
+      }
+      closeSheet('actionSheet');
+      renderProjects();
+      toast('已重命名');
+    });
+  });
+
+  $('exportBtn').addEventListener('click', function () {
+    if (!actionTarget) return;
+    var html = Store.buildStandaloneHtml(actionTarget);
+    var filename = actionTarget.name.replace(/[\\/:*?"<>|]/g, '_') + '.html';
+    Store.downloadText(filename, html);
+    closeSheet('actionSheet');
+    toast('已导出 ' + filename);
+  });
+
+  $('copyHtmlBtn').addEventListener('click', function () {
+    if (!actionTarget) return;
+    Store.copyText(Store.buildStandaloneHtml(actionTarget))
+      .then(function () {
+        closeSheet('actionSheet');
+        toast('完整 HTML 已复制');
+      })
+      .catch(function () {
+        toast('复制失败');
+      });
+  });
+
+  $('copyJsonBtn').addEventListener('click', function () {
+    if (!actionTarget) return;
+    Store.copyText(JSON.stringify(actionTarget))
+      .then(function () {
+        closeSheet('actionSheet');
+        toast('JSON 已复制');
+      })
+      .catch(function () {
+        toast('复制失败');
+      });
+  });
+
+  $('deleteBtn').addEventListener('click', function () {
+    if (!actionTarget) return;
+    var target = actionTarget;
+    if (!window.confirm('删除「' + target.name + '」？此操作不可撤销。')) return;
+
+    Store.deleteProject(target.id).then(function () {
+      projects = projects.filter(function (p) {
+        return p.id !== target.id;
+      });
+      closeSheet('actionSheet');
+      closeSheet('projectSheet');
+
+      if (current && current.id === target.id) {
+        current = null;
+        if (projects.length) {
+          openProject(projects[0], true);
+        } else {
+          Store.createProject('未命名项目').then(function (project) {
+            projects = [project];
+            openProject(project, false);
+          });
+        }
+      }
+      renderProjects();
+      toast('已删除');
+    });
+  });
+
+  /* ================= 事件：弹层关闭 ================= */
+  var closers = document.querySelectorAll('[data-close]');
+  for (var c = 0; c < closers.length; c++) {
+    (function (el) {
+      el.addEventListener('click', function () {
+        closeSheet(el.getAttribute('data-close'));
+      });
+    })(closers[c]);
+  }
+
+  /* ================= 事件：控制台 ================= */
   consoleHead.addEventListener('click', function (e) {
     if (e.target.closest('button')) return;
     setConsoleOpen(consoleBody.hidden);
@@ -437,11 +669,7 @@
     clearLogs();
   });
 
-  $('backupBtn').addEventListener('click', function (e) {
-    e.stopPropagation();
-    copyBackup();
-  });
-
+  /* ================= 事件：视图切换 ================= */
   viewSwitch.addEventListener('click', function (e) {
     var btn = e.target.closest('button');
     if (!btn) return;
@@ -463,17 +691,55 @@
     }
   });
 
-  /* ================= 启动 ================= */
-  load();
-  editor.value = state[currentTab];
-  setConsoleOpen(false);
-  updateLayout();
+  /* ================= 应用被切到后台时立刻保存 ================= */
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushSave();
+  });
 
-  if (restored) {
-    saveHint.textContent = '已恢复';
-    showRestoredHint();
-  } else {
-    saveHint.textContent = '空白项目';
-    showBlank();
+  /* ================= 启动 ================= */
+  function boot() {
+    editor.value = '';
+    setConsoleOpen(false);
+    updateLayout();
+
+    Store.migrateLegacy()
+      .then(function () {
+        return Store.listProjects();
+      })
+      .then(function (list) {
+        projects = list;
+        var lastId = null;
+        try {
+          lastId = localStorage.getItem(LAST_KEY);
+        } catch (e) {}
+
+        var target = null;
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === lastId) {
+            target = list[i];
+            break;
+          }
+        }
+        if (!target) target = list[0];
+        if (target) return target;
+        return Store.createProject('未命名项目').then(function (project) {
+          projects = [project];
+          return project;
+        });
+      })
+      .then(function (project) {
+        openProject(project, false);
+      })
+      .catch(function (err) {
+        if (window.console) console.error(err);
+        toast('存储不可用，改动不会保存');
+        openProject(
+          { id: 'temp', name: '临时项目', html: '', css: '', js: '', createdAt: Date.now(), updatedAt: Date.now() },
+          false
+        );
+      });
   }
+
+  boot();
 })();
