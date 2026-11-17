@@ -88,7 +88,70 @@
   window.addEventListener('unhandledrejection', function (e) {
     post('console', { level: 'error', args: '未捕获的 Promise 异常：' + fmt(e.reason) });
   });
+  /* ---- iOS 音频解锁：第一次触摸时恢复被挂起的音频 ---- */
+  var audioContexts = [];
 
+  function patchAudioContext() {
+    var Native = window.AudioContext || window.webkitAudioContext;
+    if (!Native) return;
+
+    function Wrapped() {
+      var ctx = new Native();
+      audioContexts.push(ctx);
+      return ctx;
+    }
+    Wrapped.prototype = Native.prototype;
+
+    try {
+      window.AudioContext = Wrapped;
+      window.webkitAudioContext = Wrapped;
+    } catch (e) {}
+  }
+
+  var blockedMedia = [];
+  var nativePlay = window.HTMLMediaElement && window.HTMLMediaElement.prototype.play;
+
+  if (nativePlay) {
+    window.HTMLMediaElement.prototype.play = function () {
+      var self = this;
+      var result = nativePlay.apply(this, arguments);
+      if (result && typeof result.catch === 'function') {
+        result.catch(function () {
+          if (blockedMedia.indexOf(self) === -1) blockedMedia.push(self);
+        });
+      }
+      return result;
+    };
+  }
+
+  function unlockAudio() {
+    var i;
+    for (i = 0; i < audioContexts.length; i++) {
+      if (audioContexts[i].state === 'suspended') {
+        audioContexts[i].resume().catch(function () {});
+      }
+    }
+    for (i = blockedMedia.length - 1; i >= 0; i--) {
+      var media = blockedMedia[i];
+      if (!media.paused) {
+        blockedMedia.splice(i, 1);
+        continue;
+      }
+      var p = media.play();
+      if (p && typeof p.catch === 'function') p.catch(function () {});
+      else blockedMedia.splice(i, 1);
+    }
+  }
+
+  function installAudioUnlock() {
+    var events = ['touchstart', 'touchend', 'pointerdown', 'click', 'keydown'];
+    for (var i = 0; i < events.length; i++) {
+      window.addEventListener(events[i], unlockAudio, { capture: true, passive: true });
+    }
+  }
+
+  patchAudioContext();
+  installAudioUnlock();
   post('ready');
 })();
 `;
