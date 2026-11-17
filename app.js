@@ -277,9 +277,11 @@
     iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.setAttribute('title', '运行预览');
     iframe.srcdoc = buildDocument(state);
-
     frameHost.replaceChildren(iframe);
     currentWindow = iframe.contentWindow;
+    iframe.addEventListener('load', function () {
+      if (immersive) injectGameStyles(true);
+    });
     clearLogs();
   }
 
