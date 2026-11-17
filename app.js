@@ -614,11 +614,13 @@
     immersive = !immersive;
     if (immersive && !isWide()) mobileView = 'preview';
     updateLayout();
+    injectGameStyles(immersive);
   });
 
   exitBtn.addEventListener('click', function () {
     immersive = false;
     updateLayout();
+    injectGameStyles(false);
   });
 
   /* ================= 事件：项目列表 ================= */
