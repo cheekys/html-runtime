@@ -232,6 +232,40 @@
       '</html>'
     ].join('\n');
   }
+  /* ================= 游戏模式：注入触摸优化样式 ================= */
+  function injectGameStyles(on) {
+    var iframe = frameHost.querySelector('iframe');
+    if (!iframe) return;
+
+    var doc = null;
+    try {
+      doc = iframe.contentDocument;
+    } catch (e) {
+      return;
+    }
+    if (!doc) return;
+
+    var existing = doc.getElementById('__hr_game_style__');
+
+    if (on && !existing) {
+      var style = doc.createElement('style');
+      style.id = '__hr_game_style__';
+      style.textContent = [
+        'html, body {',
+        '  margin: 0;',
+        '  overscroll-behavior: none;',
+        '  -webkit-touch-callout: none;',
+        '  -webkit-user-select: none;',
+        '  user-select: none;',
+        '  -webkit-tap-highlight-color: transparent;',
+        '  touch-action: manipulation;',
+        '}'
+      ].join('\n');
+      (doc.head || doc.documentElement).appendChild(style);
+    } else if (!on && existing) {
+      existing.parentNode.removeChild(existing);
+    }
+  }
 
   /* ================= 运行 ================= */
   function run() {
