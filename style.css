@@ -602,3 +602,91 @@ button { font-family: inherit; }
     max-height: 70vh;
   }
 }
+/* ---------- 文件标签栏 ---------- */
+.filetabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.filetabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab.entry::before {
+  content: '•';
+  margin-right: 4px;
+  color: var(--accent);
+}
+
+.addfile {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.addfile:active {
+  background: var(--bg-2);
+}
+
+/* ---------- 编辑区容器 ---------- */
+.editor-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 二进制文件预览 ---------- */
+.binary-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 20px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 50vh;
+  border-radius: 8px;
+  background: repeating-conic-gradient(#1a2029 0% 25%, #131820 0% 50%) 50% / 16px 16px;
+}
+
+.preview-video,
+.binary-preview audio {
+  width: 100%;
+  max-width: 420px;
+}
+
+.preview-meta {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.preview-tip {
+  font-size: 12px;
+  color: #4a5568;
+  text-align: center;
+  line-height: 1.7;
+}
