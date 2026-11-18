@@ -30,19 +30,21 @@
   <main class="workspace">
     <section class="pane" id="editorPane">
       <div class="tabbar">
-        <button class="tab active" data-tab="html">HTML</button>
-        <button class="tab" data-tab="css">CSS</button>
-        <button class="tab" data-tab="js">JS</button>
+        <div class="filetabs" id="fileTabs"></div>
+        <button class="addfile" id="addFileBtn" aria-label="新建文件">＋</button>
         <span class="save-hint" id="saveHint">已保存</span>
       </div>
-      <textarea
-        id="editor"
-        spellcheck="false"
-        autocapitalize="off"
-        autocorrect="off"
-        autocomplete="off"
-        aria-label="代码编辑器"
-      ></textarea>
+      <div class="editor-area">
+        <textarea
+          id="editor"
+          spellcheck="false"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          aria-label="代码编辑器"
+        ></textarea>
+        <div class="binary-preview" id="binaryPreview" hidden></div>
+      </div>
     </section>
 
     <section class="pane preview-pane" id="previewPane">
@@ -83,8 +85,8 @@
     </div>
     <div class="sheet-actions">
       <button class="btn" id="newProjectBtn">＋ 新建</button>
-      <button class="btn" id="importBtn">导入 HTML</button>
-      <input type="file" id="fileInput" accept=".html,.htm,text/html" hidden />
+      <button class="btn" id="importBtn">导入 HTML / ZIP</button>
+      <input type="file" id="fileInput" accept=".html,.htm,.zip" hidden />
     </div>
     <div class="project-list" id="projectList"></div>
   </div>
@@ -101,7 +103,6 @@
     <button class="sheet-item" id="renameBtn">重命名</button>
     <button class="sheet-item" id="exportBtn">导出单文件 HTML</button>
     <button class="sheet-item" id="copyHtmlBtn">复制 HTML 代码</button>
-    <button class="sheet-item" id="copyJsonBtn">复制 JSON 备份</button>
     <button class="sheet-item danger" id="deleteBtn">删除项目</button>
   </div>
 </div>
