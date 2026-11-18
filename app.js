@@ -1,5 +1,5 @@
 /* ============================================================
-   运行环境 · 逻辑（M2：多项目 + IndexedDB）
+   运行环境 · 逻辑（M4：多文件 + zip）
    ============================================================ */
 
 (function () {
@@ -11,7 +11,7 @@
   var MAX_LOGS = 300;
   var LAST_KEY = 'html-runtime:last-project';
 
-  /* ================= 注入到运行环境的桥接脚本 ================= */
+  /* ================= 桥接脚本 ================= */
   var BRIDGE = String.raw`
 (function () {
   if (window.__RUNTIME_BRIDGE__) return;
@@ -88,7 +88,8 @@
   window.addEventListener('unhandledrejection', function (e) {
     post('console', { level: 'error', args: '未捕获的 Promise 异常：' + fmt(e.reason) });
   });
-  /* ---- iOS 音频解锁：第一次触摸时恢复被挂起的音频 ---- */
+
+  /* ---- iOS 音频解锁 ---- */
   var audioContexts = [];
 
   function patchAudioContext() {
@@ -152,6 +153,7 @@
 
   patchAudioContext();
   installAudioUnlock();
+
   post('ready');
 })();
 `;
@@ -170,9 +172,7 @@
   /* ================= 状态 ================= */
   var projects = [];
   var current = null;
-  var state = { html: '', css: '', js: '' };
-  var currentTab = 'html';
-  var currentWindow = null;
+  var currentPath = '';
   var immersive = false;
   var mobileView = 'code';
   var runTimer = null;
@@ -181,6 +181,9 @@
   var logTotal = 0;
   var errorTotal = 0;
   var actionTarget = null;
+  var currentWindow = null;
+  var assetUrls = [];
+  var previewUrl = '';
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -203,36 +206,17 @@
   var actionSheet = $('actionSheet');
   var actionTitleEl = $('actionTitle');
   var fileInput = $('fileInput');
-  var tabButtons = document.querySelectorAll('.tab');
+  var fileTabsEl = $('fileTabs');
+  var binaryPreviewEl = $('binaryPreview');
 
-  /* ================= 文档构建 ================= */
-  function buildDocument(code) {
-    var css = String(code.css || '').replace(/<\/style/gi, '<\\/style');
-    var js = String(code.js || '').replace(/<\/script/gi, '<\\/script');
-
-    return [
-      '<!doctype html>',
-      '<html lang="zh-CN">',
-      '<head>',
-      '<meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
-      '<link rel="icon" href="data:,">',
-      '<script>' + BRIDGE + '</script>',
-      '<style>',
-      'html, body { margin: 0; }',
-      css,
-      '</style>',
-      '</head>',
-      '<body>',
-      code.html || '',
-      '<script>',
-      js,
-      '</script>',
-      '</body>',
-      '</html>'
-    ].join('\n');
+  /* ================= 运行 ================= */
+  function releaseAssets() {
+    for (var i = 0; i < assetUrls.length; i++) {
+      URL.revokeObjectURL(assetUrls[i]);
+    }
+    assetUrls = [];
   }
-  /* ================= 游戏模式：注入触摸优化样式 ================= */
+
   function injectGameStyles(on) {
     var iframe = frameHost.querySelector('iframe');
     if (!iframe) return;
@@ -267,21 +251,31 @@
     }
   }
 
-  /* ================= 运行 ================= */
   function run() {
     clearTimeout(runTimer);
+    if (!current) return;
+
+    commitEditor();
+    releaseAssets();
+
+    var built = Store.createAssetMap(current);
+    assetUrls = built.urls;
+
+    var doc = Store.buildRuntimeDocument(current, built.map, BRIDGE);
 
     var iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', SANDBOX);
     iframe.setAttribute('allow', 'autoplay; fullscreen; gamepad; clipboard-write');
     iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.setAttribute('title', '运行预览');
-    iframe.srcdoc = buildDocument(state);
-    frameHost.replaceChildren(iframe);
-    currentWindow = iframe.contentWindow;
+    iframe.srcdoc = doc;
+
     iframe.addEventListener('load', function () {
       if (immersive) injectGameStyles(true);
     });
+
+    frameHost.replaceChildren(iframe);
+    currentWindow = iframe.contentWindow;
     clearLogs();
   }
 
@@ -361,9 +355,6 @@
   /* ================= 保存 ================= */
   function persist() {
     if (!current) return;
-    current.html = state.html;
-    current.css = state.css;
-    current.js = state.js;
     current.updatedAt = Date.now();
 
     saveHint.textContent = '保存中…';
@@ -395,6 +386,7 @@
   }
 
   function flushSave() {
+    commitEditor();
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -402,28 +394,131 @@
     }
   }
 
-  /* ================= 项目 ================= */
-  function updateTabButtons() {
-    for (var i = 0; i < tabButtons.length; i++) {
-      tabButtons[i].classList.toggle('active', tabButtons[i].getAttribute('data-tab') === currentTab);
+  /* ================= 文件与编辑器 ================= */
+  function commitEditor() {
+    if (!current || !currentPath) return;
+    var file = Store.findFile(current, currentPath);
+    if (!file || file.kind !== 'text') return;
+    if (file.text === editor.value) return;
+    file.text = editor.value;
+  }
+
+  function renderFileTabs() {
+    fileTabsEl.textContent = '';
+    if (!current) return;
+
+    current.files.forEach(function (file) {
+      var tab = document.createElement('button');
+      tab.className = 'tab';
+      tab.setAttribute('data-path', file.path);
+      if (file.path === currentPath) tab.classList.add('active');
+      if (file.path === current.entry) tab.classList.add('entry');
+      tab.textContent = file.path.split('/').pop();
+      tab.title = file.path;
+      tab.addEventListener('click', function () {
+        commitEditor();
+        selectFile(file.path, true);
+      });
+      fileTabsEl.appendChild(tab);
+    });
+
+    var active = fileTabsEl.querySelector('.tab.active');
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({ block: 'nearest', inline: 'center' });
     }
   }
 
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+  }
+
+  function renderBinaryPreview(file) {
+    binaryPreviewEl.textContent = '';
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      previewUrl = '';
+    }
+
+    if (file.blob) {
+      previewUrl = URL.createObjectURL(file.blob);
+      var mime = file.mime || '';
+
+      if (mime.indexOf('image/') === 0) {
+        var img = document.createElement('img');
+        img.className = 'preview-image';
+        img.src = previewUrl;
+        img.alt = file.path;
+        binaryPreviewEl.appendChild(img);
+      } else if (mime.indexOf('audio/') === 0) {
+        var audio = document.createElement('audio');
+        audio.src = previewUrl;
+        audio.controls = true;
+        binaryPreviewEl.appendChild(audio);
+      } else if (mime.indexOf('video/') === 0) {
+        var video = document.createElement('video');
+        video.className = 'preview-video';
+        video.src = previewUrl;
+        video.controls = true;
+        binaryPreviewEl.appendChild(video);
+      } else {
+        var tip = document.createElement('div');
+        tip.className = 'preview-tip';
+        tip.textContent = '这个类型没法预览，但运行时会正常加载。';
+        binaryPreviewEl.appendChild(tip);
+      }
+    }
+
+    var meta = document.createElement('div');
+    meta.className = 'preview-meta';
+    meta.textContent = file.path + ' · ' + formatBytes(file.blob ? file.blob.size : 0);
+    binaryPreviewEl.appendChild(meta);
+  }
+
+  function selectFile(path, focus) {
+    if (!current) return;
+
+    var file = Store.findFile(current, path);
+    currentPath = file ? path : '';
+    renderFileTabs();
+
+    if (!file) {
+      editor.hidden = false;
+      binaryPreviewEl.hidden = true;
+      editor.value = '';
+      return;
+    }
+
+    if (file.kind === 'text') {
+      binaryPreviewEl.hidden = true;
+      editor.hidden = false;
+      editor.value = file.text || '';
+      if (focus) editor.focus();
+    } else {
+      editor.hidden = true;
+      binaryPreviewEl.hidden = false;
+      renderBinaryPreview(file);
+    }
+  }
+
+  /* ================= 项目 ================= */
   function openProject(project, autoRun) {
+    commitEditor();
     current = project;
-    state.html = project.html || '';
-    state.css = project.css || '';
-    state.js = project.js || '';
-    currentTab = 'html';
-    editor.value = state.html;
-    updateTabButtons();
+    currentPath = '';
     projectNameEl.textContent = project.name;
 
     try {
       localStorage.setItem(LAST_KEY, project.id);
     } catch (e) {}
 
-    var hasContent = Boolean(state.html || state.css || state.js);
+    selectFile(project.entry, false);
+
+    var entryFile = Store.findFile(project, project.entry);
+    var hasContent = entryFile && entryFile.kind === 'text' && (entryFile.text || '').trim();
+
     if (autoRun && hasContent) {
       run();
     } else if (hasContent) {
@@ -441,9 +536,11 @@
   }
 
   function sizeLabel(project) {
-    var bytes = (project.html || '').length + (project.css || '').length + (project.js || '').length;
-    if (bytes < 1024) return bytes + ' B';
-    return (bytes / 1024).toFixed(1) + ' KB';
+    var bytes = 0;
+    project.files.forEach(function (file) {
+      bytes += file.kind === 'text' ? (file.text || '').length : (file.blob ? file.blob.size : 0);
+    });
+    return formatBytes(bytes);
   }
 
   function renderProjects() {
@@ -471,7 +568,8 @@
 
       var sub = document.createElement('div');
       sub.className = 'project-row-sub';
-      sub.textContent = formatTime(project.updatedAt) + ' · ' + sizeLabel(project);
+      sub.textContent =
+        formatTime(project.updatedAt) + ' · ' + project.files.length + ' 个文件 · ' + sizeLabel(project);
 
       meta.appendChild(name);
       meta.appendChild(sub);
@@ -567,17 +665,12 @@
     currentWindow = null;
   }
 
-  function setTab(tab) {
-    state[currentTab] = editor.value;
-    currentTab = tab;
-    editor.value = state[tab];
-    updateTabButtons();
-    editor.focus();
-  }
-
   /* ================= 事件：编辑器 ================= */
   editor.addEventListener('input', function () {
-    state[currentTab] = editor.value;
+    if (!current || !currentPath) return;
+    var file = Store.findFile(current, currentPath);
+    if (!file || file.kind !== 'text') return;
+    file.text = editor.value;
     scheduleSave();
     scheduleRun();
   });
@@ -589,17 +682,34 @@
     var end = editor.selectionEnd;
     editor.value = editor.value.slice(0, start) + '  ' + editor.value.slice(end);
     editor.selectionStart = editor.selectionEnd = start + 2;
-    state[currentTab] = editor.value;
+
+    if (current && currentPath) {
+      var file = Store.findFile(current, currentPath);
+      if (file && file.kind === 'text') file.text = editor.value;
+    }
     scheduleSave();
   });
 
-  for (var i = 0; i < tabButtons.length; i++) {
-    (function (btn) {
-      btn.addEventListener('click', function () {
-        setTab(btn.getAttribute('data-tab'));
-      });
-    })(tabButtons[i]);
-  }
+  $('addFileBtn').addEventListener('click', function () {
+    if (!current) return;
+    var path = window.prompt('新建文件（可以带目录）', 'untitled.js');
+    if (path === null) return;
+
+    path = String(path).trim().replace(/^\/+/, '');
+    if (!path) return;
+    if (Store.findFile(current, path)) {
+      toast('这个文件已存在');
+      return;
+    }
+
+    commitEditor();
+    current.files.push(Store.makeFile(path, ''));
+    if (!current.entry) current.entry = path;
+    selectFile(path, true);
+    scheduleSave();
+    renderFileTabs();
+    toast('已新建 ' + path);
+  });
 
   /* ================= 事件：运行 / 全屏 ================= */
   $('runBtn').addEventListener('click', function () {
@@ -649,23 +759,56 @@
   fileInput.addEventListener('change', function () {
     var file = fileInput.files && fileInput.files[0];
     if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function () {
-      var parsed = Store.parseHtmlFile(String(reader.result || ''));
+    fileInput.value = '';
+
+    var isZip = /\.zip$/i.test(file.name);
+    flushSave();
+
+    if (isZip) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        toast('正在解压…');
+        Store.importZip(reader.result, file.name.replace(/\.zip$/i, ''))
+          .then(function (result) {
+            return Store.createProject(result.name, result.files);
+          })
+          .then(function (project) {
+            projects.unshift(project);
+            closeSheet('projectSheet');
+            openProject(project, true);
+            toast('已导入 ' + project.files.length + ' 个文件');
+          })
+          .catch(function (err) {
+            toast(err && err.message ? err.message : '导入失败');
+          });
+      };
+      reader.onerror = function () {
+        toast('文件读取失败');
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    var textReader = new FileReader();
+    textReader.onload = function () {
+      var text = String(textReader.result || '');
       var name = file.name.replace(/\.(html?|HTML?)$/, '') || '导入项目';
-      flushSave();
-      Store.createProject(name, parsed).then(function (project) {
-        projects.unshift(project);
-        closeSheet('projectSheet');
-        openProject(project, true);
-        toast('已导入「' + name + '」');
-      });
+      var files = Store.makeHtmlProjectFiles(text);
+      Store.createProject(name, files)
+        .then(function (project) {
+          projects.unshift(project);
+          closeSheet('projectSheet');
+          openProject(project, true);
+          toast('已导入');
+        })
+        .catch(function () {
+          toast('导入失败');
+        });
     };
-    reader.onerror = function () {
+    textReader.onerror = function () {
       toast('文件读取失败');
     };
-    reader.readAsText(file);
-    fileInput.value = '';
+    textReader.readAsText(file);
   });
 
   /* ================= 事件：项目操作 ================= */
@@ -690,31 +833,30 @@
 
   $('exportBtn').addEventListener('click', function () {
     if (!actionTarget) return;
-    var html = Store.buildStandaloneHtml(actionTarget);
-    var filename = actionTarget.name.replace(/[\\/:*?"<>|]/g, '_') + '.html';
-    Store.downloadText(filename, html);
-    closeSheet('actionSheet');
-    toast('已导出 ' + filename);
+    var target = actionTarget;
+    toast('正在打包…');
+
+    Store.buildStandaloneHtml(target)
+      .then(function (html) {
+        var filename = target.name.replace(/[\\/:*?"<>|]/g, '_') + '.html';
+        Store.downloadText(filename, html);
+        closeSheet('actionSheet');
+        toast('已导出 ' + filename);
+      })
+      .catch(function (err) {
+        toast('导出失败：' + (err && err.message ? err.message : '未知错误'));
+      });
   });
 
   $('copyHtmlBtn').addEventListener('click', function () {
     if (!actionTarget) return;
-    Store.copyText(Store.buildStandaloneHtml(actionTarget))
+    Store.buildStandaloneHtml(actionTarget)
+      .then(function (html) {
+        return Store.copyText(html);
+      })
       .then(function () {
         closeSheet('actionSheet');
         toast('完整 HTML 已复制');
-      })
-      .catch(function () {
-        toast('复制失败');
-      });
-  });
-
-  $('copyJsonBtn').addEventListener('click', function () {
-    if (!actionTarget) return;
-    Store.copyText(JSON.stringify(actionTarget))
-      .then(function () {
-        closeSheet('actionSheet');
-        toast('JSON 已复制');
       })
       .catch(function () {
         toast('复制失败');
@@ -735,6 +877,8 @@
 
       if (current && current.id === target.id) {
         current = null;
+        currentPath = '';
+        releaseAssets();
         if (projects.length) {
           openProject(projects[0], true);
         } else {
@@ -792,7 +936,6 @@
     }
   });
 
-  /* ================= 应用被切到后台时立刻保存 ================= */
   window.addEventListener('pagehide', flushSave);
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') flushSave();
@@ -824,6 +967,7 @@
         }
         if (!target) target = list[0];
         if (target) return target;
+
         return Store.createProject('未命名项目').then(function (project) {
           projects = [project];
           return project;
@@ -836,7 +980,11 @@
         if (window.console) console.error(err);
         toast('存储不可用，改动不会保存');
         openProject(
-          { id: 'temp', name: '临时项目', html: '', css: '', js: '', createdAt: Date.now(), updatedAt: Date.now() },
+          Store.normalizeProject({
+            id: 'temp',
+            name: '临时项目',
+            files: []
+          }),
           false
         );
       });
