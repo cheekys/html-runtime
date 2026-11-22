@@ -1,5 +1,5 @@
 /* ============================================================
-   运行环境 · 逻辑（M4：多文件 + zip）
+   运行环境 · 逻辑（M5：路径垫片 + 音频兼容 + 触摸容错）
    ============================================================ */
 
 (function () {
@@ -142,6 +142,17 @@
       if (p && typeof p.catch === 'function') p.catch(function () {});
       else blockedMedia.splice(i, 1);
     }
+
+    if (!window.__HR_AUDIO_LOGGED__) {
+      window.__HR_AUDIO_LOGGED__ = true;
+      var states = [];
+      for (i = 0; i < audioContexts.length; i++) states.push(audioContexts[i].state);
+      post('console', {
+        level: 'info',
+        args: '音频解锁：AudioContext ' + audioContexts.length + ' 个，状态 ' +
+          (states.join(',') || '无')
+      });
+    }
   }
 
   function installAudioUnlock() {
@@ -153,10 +164,30 @@
 
   patchAudioContext();
   installAudioUnlock();
+
   /* ---- 相对路径垫片：拦截 JS 里的动态资源请求 ---- */
   var ASSETS = window.__HR_ASSETS__ || {};
   var BASE_DIR = window.__HR_BASE__ || '';
   var AUDIO_EXT = { ogg: 1, m4a: 1, mp3: 1, wav: 1, aac: 1 };
+
+  var AUDIO_CAN = (function () {
+    var can = {};
+    try {
+      var probe = document.createElement('audio');
+      var map = {
+        ogg: 'audio/ogg; codecs="vorbis"',
+        m4a: 'audio/mp4',
+        mp3: 'audio/mpeg',
+        wav: 'audio/wav',
+        aac: 'audio/aac'
+      };
+      for (var key in map) {
+        if (!map.hasOwnProperty(key)) continue;
+        can[key] = !!probe.canPlayType(map[key]);
+      }
+    } catch (e) {}
+    return can;
+  })();
 
   function normalizePath(input) {
     var parts = String(input || '').split('/');
@@ -168,6 +199,35 @@
       else out.push(seg);
     }
     return out.join('/');
+  }
+
+  function noteFormatSwap(from, to) {
+    if (!window.__HR_FMT_LOGGED__) window.__HR_FMT_LOGGED__ = {};
+    if (window.__HR_FMT_LOGGED__[from]) return;
+    window.__HR_FMT_LOGGED__[from] = true;
+    try {
+      post('console', { level: 'info', args: '音频格式替换：' + from + ' → ' + to });
+    } catch (e) {}
+  }
+
+  // 当前格式浏览器不支持时，找同名的可用格式
+  function pickAltAudio(path) {
+    var dot = path.lastIndexOf('.');
+    if (dot <= 0) return null;
+    var ext = path.slice(dot + 1).toLowerCase();
+    if (!AUDIO_EXT[ext]) return null;
+    if (AUDIO_CAN[ext]) return null;
+
+    var stem = path.slice(0, dot);
+    var alts = ['m4a', 'mp3', 'ogg', 'wav', 'aac'];
+    for (var i = 0; i < alts.length; i++) {
+      var alt = alts[i];
+      if (alt === ext) continue;
+      if (!AUDIO_CAN[alt]) continue;
+      var candidate = stem + '.' + alt;
+      if (ASSETS[candidate]) return candidate;
+    }
+    return null;
   }
 
   function resolveAsset(url) {
@@ -184,18 +244,25 @@
         ? normalizePath(noQuery.slice(1))
         : normalizePath((BASE_DIR ? BASE_DIR + '/' : '') + noQuery);
 
-      if (ASSETS[path]) return ASSETS[path];
+      if (ASSETS[path]) {
+        var altPath = pickAltAudio(path);
+        if (altPath) {
+          noteFormatSwap(path, altPath);
+          return ASSETS[altPath];
+        }
+        return ASSETS[path];
+      }
 
-      // 音频格式兜底：只有 m4a 没有 ogg 的情况很常见
+      // 文件本身不存在时，音频也尝试同名换格式
       var dot = path.lastIndexOf('.');
-      if (dot > 0) {
-        var ext = path.slice(dot + 1).toLowerCase();
-        if (AUDIO_EXT[ext]) {
-          var stem = path.slice(0, dot);
-          var alts = ['ogg', 'm4a', 'mp3', 'wav', 'aac'];
-          for (var a = 0; a < alts.length; a++) {
-            if (alts[a] === ext) continue;
-            if (ASSETS[stem + '.' + alts[a]]) return ASSETS[stem + '.' + alts[a]];
+      if (dot > 0 && AUDIO_EXT[path.slice(dot + 1).toLowerCase()]) {
+        var stem = path.slice(0, dot);
+        var alts = ['m4a', 'mp3', 'ogg', 'wav', 'aac'];
+        for (var i = 0; i < alts.length; i++) {
+          var cand = stem + '.' + alts[i];
+          if (ASSETS[cand]) {
+            noteFormatSwap(path, cand);
+            return ASSETS[cand];
           }
         }
       }
@@ -227,7 +294,7 @@
     };
   }
 
-  // 3) img.src / audio.src / script.src 这类属性赋值
+  // 3) img.src / audio.src / script.src
   function patchSrcProperty(proto) {
     if (!proto) return;
     var desc = Object.getOwnPropertyDescriptor(proto, 'src');
@@ -249,7 +316,7 @@
   patchSrcProperty(window.HTMLScriptElement && HTMLScriptElement.prototype);
   patchSrcProperty(window.HTMLSourceElement && HTMLSourceElement.prototype);
 
-  // 4) setAttribute('src', ...) 这类写法
+  // 4) setAttribute('src', ...)
   if (window.Element && Element.prototype.setAttribute) {
     var nativeSetAttribute = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function (name, value) {
@@ -260,6 +327,42 @@
       return nativeSetAttribute.call(this, name, value);
     };
   }
+
+  /* ---- 触摸列表容错：部分游戏用错数组长度，越界会抛异常 ---- */
+  function clampTouchList(list) {
+    if (!list) return list;
+    var len = list.length;
+    var last = len ? list[len - 1] : null;
+    var safe = {
+      length: len,
+      item: function (i) { return safe[i] || last; }
+    };
+    for (var i = 0; i < len; i++) safe[i] = list[i];
+    if (last) {
+      for (var j = len; j < 8; j++) safe[j] = last;
+    }
+    return safe;
+  }
+
+  function patchTouchList(name) {
+    if (!window.TouchEvent) return;
+    var desc = Object.getOwnPropertyDescriptor(TouchEvent.prototype, name);
+    if (!desc || !desc.get) return;
+    try {
+      Object.defineProperty(TouchEvent.prototype, name, {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get: function () {
+          return clampTouchList(desc.get.call(this));
+        }
+      });
+    } catch (e) {}
+  }
+
+  patchTouchList('changedTouches');
+  patchTouchList('touches');
+  patchTouchList('targetTouches');
+
   post('ready');
 })();
 `;
