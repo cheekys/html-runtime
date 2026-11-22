@@ -254,12 +254,16 @@
     return out.join('/');
   }
 
-  function noteFormatSwap(from, to) {
+    function noteFormatSwap(from, to) {
     if (!window.__HR_FMT_LOGGED__) window.__HR_FMT_LOGGED__ = {};
     if (window.__HR_FMT_LOGGED__[from]) return;
     window.__HR_FMT_LOGGED__[from] = true;
     try {
-      post('console', { level: 'info', args: '音频格式替换：' + from + ' → ' + to });
+      post('console', {
+        level: 'warn',
+        args: '音频回退：项目里没有 ' + from + '，改用 ' + to +
+          '（若系统不支持该格式，游戏会没有声音）'
+      });
     } catch (e) {}
   }
 
