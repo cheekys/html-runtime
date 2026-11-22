@@ -178,13 +178,16 @@
     };
   }
 
-  function unlockAudio() {
+    function unlockAudio() {
     var i;
+    var pending = [];
+
     for (i = 0; i < audioContexts.length; i++) {
       if (audioContexts[i].state === 'suspended') {
-        audioContexts[i].resume().catch(function () {});
+        pending.push(audioContexts[i].resume().catch(function () {}));
       }
     }
+
     for (i = blockedMedia.length - 1; i >= 0; i--) {
       var media = blockedMedia[i];
       if (!media.paused) {
@@ -196,16 +199,19 @@
       else blockedMedia.splice(i, 1);
     }
 
-    if (!window.__HR_AUDIO_LOGGED__) {
+    if (window.__HR_AUDIO_LOGGED__) return;
+
+    Promise.all(pending).then(function () {
+      if (window.__HR_AUDIO_LOGGED__) return;
       window.__HR_AUDIO_LOGGED__ = true;
       var states = [];
-      for (i = 0; i < audioContexts.length; i++) states.push(audioContexts[i].state);
+      for (var j = 0; j < audioContexts.length; j++) states.push(audioContexts[j].state);
       post('console', {
         level: 'info',
         args: '音频解锁：AudioContext ' + audioContexts.length + ' 个，状态 ' +
           (states.join(',') || '无')
       });
-    }
+    });
   }
 
   function installAudioUnlock() {
