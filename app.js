@@ -153,7 +153,113 @@
 
   patchAudioContext();
   installAudioUnlock();
+  /* ---- 相对路径垫片：拦截 JS 里的动态资源请求 ---- */
+  var ASSETS = window.__HR_ASSETS__ || {};
+  var BASE_DIR = window.__HR_BASE__ || '';
+  var AUDIO_EXT = { ogg: 1, m4a: 1, mp3: 1, wav: 1, aac: 1 };
 
+  function normalizePath(input) {
+    var parts = String(input || '').split('/');
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var seg = parts[i];
+      if (!seg || seg === '.') continue;
+      if (seg === '..') out.pop();
+      else out.push(seg);
+    }
+    return out.join('/');
+  }
+
+  function resolveAsset(url) {
+    try {
+      if (url == null) return url;
+      var s = String(url);
+      if (!s) return s;
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(s)) return s;
+
+      var noQuery = s.replace(/[?#].*$/, '');
+      if (!noQuery) return s;
+
+      var path = noQuery.charAt(0) === '/'
+        ? normalizePath(noQuery.slice(1))
+        : normalizePath((BASE_DIR ? BASE_DIR + '/' : '') + noQuery);
+
+      if (ASSETS[path]) return ASSETS[path];
+
+      // 音频格式兜底：只有 m4a 没有 ogg 的情况很常见
+      var dot = path.lastIndexOf('.');
+      if (dot > 0) {
+        var ext = path.slice(dot + 1).toLowerCase();
+        if (AUDIO_EXT[ext]) {
+          var stem = path.slice(0, dot);
+          var alts = ['ogg', 'm4a', 'mp3', 'wav', 'aac'];
+          for (var a = 0; a < alts.length; a++) {
+            if (alts[a] === ext) continue;
+            if (ASSETS[stem + '.' + alts[a]]) return ASSETS[stem + '.' + alts[a]];
+          }
+        }
+      }
+
+      return s;
+    } catch (e) {
+      return url;
+    }
+  }
+
+  // 1) XMLHttpRequest（howler 走的就是这条）
+  if (window.XMLHttpRequest && XMLHttpRequest.prototype.open) {
+    var nativeXhrOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length > 1) args[1] = resolveAsset(args[1]);
+      return nativeXhrOpen.apply(this, args);
+    };
+  }
+
+  // 2) fetch
+  if (window.fetch) {
+    var nativeFetch = window.fetch;
+    window.fetch = function (input, init) {
+      try {
+        if (typeof input === 'string') input = resolveAsset(input);
+      } catch (e) {}
+      return nativeFetch.call(window, input, init);
+    };
+  }
+
+  // 3) img.src / audio.src / script.src 这类属性赋值
+  function patchSrcProperty(proto) {
+    if (!proto) return;
+    var desc = Object.getOwnPropertyDescriptor(proto, 'src');
+    if (!desc || !desc.set || !desc.get) return;
+    try {
+      Object.defineProperty(proto, 'src', {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get: desc.get,
+        set: function (value) {
+          desc.set.call(this, resolveAsset(value));
+        }
+      });
+    } catch (e) {}
+  }
+
+  patchSrcProperty(window.HTMLImageElement && HTMLImageElement.prototype);
+  patchSrcProperty(window.HTMLMediaElement && HTMLMediaElement.prototype);
+  patchSrcProperty(window.HTMLScriptElement && HTMLScriptElement.prototype);
+  patchSrcProperty(window.HTMLSourceElement && HTMLSourceElement.prototype);
+
+  // 4) setAttribute('src', ...) 这类写法
+  if (window.Element && Element.prototype.setAttribute) {
+    var nativeSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+      var key = String(name).toLowerCase();
+      if (key === 'src' || key === 'href' || key === 'poster' || key === 'data') {
+        value = resolveAsset(value);
+      }
+      return nativeSetAttribute.call(this, name, value);
+    };
+  }
   post('ready');
 })();
 `;
