@@ -92,7 +92,7 @@
   /* ---- iOS 音频解锁 ---- */
   var audioContexts = [];
 
-  function patchAudioContext() {
+    function patchAudioContext() {
     var Native = window.AudioContext || window.webkitAudioContext;
     if (!Native) return;
 
@@ -107,6 +107,59 @@
       window.AudioContext = Wrapped;
       window.webkitAudioContext = Wrapped;
     } catch (e) {}
+
+    // 给 decodeAudioData 加日志：成功和失败都报一声
+    var proto = null;
+    if (window.BaseAudioContext && BaseAudioContext.prototype.decodeAudioData) {
+      proto = BaseAudioContext.prototype;
+    } else if (window.AudioContext && AudioContext.prototype.decodeAudioData) {
+      proto = AudioContext.prototype;
+    }
+    if (!proto) return;
+
+    var nativeDecode = proto.decodeAudioData;
+
+    proto.decodeAudioData = function () {
+      var self = this;
+      var args = Array.prototype.slice.call(arguments);
+      var logged = false;
+
+      function reportFail(err) {
+        if (logged) return;
+        logged = true;
+        post('console', {
+          level: 'error',
+          args: '音频解码失败：' + (err && err.name ? err.name : String(err || '未知'))
+        });
+      }
+
+      function reportOk(buffer) {
+        if (logged) return;
+        logged = true;
+        var sec = buffer && buffer.duration ? buffer.duration.toFixed(1) : '?';
+        post('console', { level: 'info', args: '音频解码成功：' + sec + ' 秒' });
+      }
+
+      if (typeof args[1] === 'function') {
+        var ok = args[1];
+        var fail = args[2];
+        args[1] = function (buffer) {
+          reportOk(buffer);
+          if (ok) ok(buffer);
+        };
+        args[2] = function (err) {
+          reportFail(err);
+          if (fail) fail(err);
+        };
+      }
+
+      var ret = nativeDecode.apply(self, args);
+
+      if (ret && typeof ret.then === 'function') {
+        ret.then(reportOk, reportFail);
+      }
+      return ret;
+    };
   }
 
   var blockedMedia = [];
