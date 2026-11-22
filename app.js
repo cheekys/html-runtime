@@ -210,22 +210,16 @@
     } catch (e) {}
   }
 
-  // 当前格式浏览器不支持时，找同名的可用格式
+    // 只在原格式是 ogg（Apple 平台解不了）时，换成同名的 m4a / mp3
   function pickAltAudio(path) {
     var dot = path.lastIndexOf('.');
     if (dot <= 0) return null;
-    var ext = path.slice(dot + 1).toLowerCase();
-    if (!AUDIO_EXT[ext]) return null;
-    if (AUDIO_CAN[ext]) return null;
+    if (path.slice(dot + 1).toLowerCase() !== 'ogg') return null;
 
     var stem = path.slice(0, dot);
-    var alts = ['m4a', 'mp3', 'ogg', 'wav', 'aac'];
+    var alts = ['m4a', 'mp3', 'wav'];
     for (var i = 0; i < alts.length; i++) {
-      var alt = alts[i];
-      if (alt === ext) continue;
-      if (!AUDIO_CAN[alt]) continue;
-      var candidate = stem + '.' + alt;
-      if (ASSETS[candidate]) return candidate;
+      if (ASSETS[stem + '.' + alts[i]]) return stem + '.' + alts[i];
     }
     return null;
   }
