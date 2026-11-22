@@ -413,13 +413,23 @@
 
     var head = doc.head || doc.documentElement;
 
-    var baseStyle = doc.createElement('style');
-    baseStyle.textContent = BASE_STYLE;
-    head.insertBefore(baseStyle, head.firstChild);
+    // 1) 资源映射表：路径 -> blob URL，必须在桥接脚本之前注入
+    var mapJson = JSON.stringify(map).replace(/</g, '\\u003c');
+    var assetScript = doc.createElement('script');
+    assetScript.textContent =
+      'window.__HR_ASSETS__=' + mapJson + ';' +
+      'window.__HR_BASE__=' + JSON.stringify(dirOf(entry.path)) + ';';
+    head.insertBefore(assetScript, head.firstChild);
 
+    // 2) 桥接脚本
     var bridge = doc.createElement('script');
     bridge.textContent = bridgeSource;
-    head.insertBefore(bridge, head.firstChild);
+    head.insertBefore(bridge, assetScript.nextSibling);
+
+    // 3) 基础样式（放在用户样式之前，方便被覆盖）
+    var baseStyle = doc.createElement('style');
+    baseStyle.textContent = BASE_STYLE;
+    head.insertBefore(baseStyle, bridge.nextSibling);
 
     // 重写属性里的资源引用
     var attrNames = ['src', 'href', 'poster', 'data'];
