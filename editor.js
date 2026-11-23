@@ -10,7 +10,7 @@
   var area = document.querySelector('.editor-area');
   if (!editor || !area) return;
 
-  var MAX_HIGHLIGHT = 80000;   // 超过这个字符数不做高亮（避免卡顿）
+  var MAX_HIGHLIGHT = 80000;
   var HIGHLIGHT_DELAY = 90;
 
   var wrap = null;
@@ -18,19 +18,22 @@
   var codeEl = null;
   var composing = false;
   var highlightTimer = null;
+  var highlightEnabled = true;
+  var syncRaf = 0;
 
   /* ================= 样式 ================= */
   function injectStyle() {
     var css = [
       '.hr-editor-wrap{position:relative;flex:1 1 auto;min-height:0;}',
       '.hr-editor-wrap > #editor{position:absolute;left:0;top:0;width:100%;height:100%;',
-      'background:transparent;color:transparent;caret-color:#e6edf3;scrollbar-width:none;}',
+      'background:transparent;color:transparent;caret-color:#e6edf3;',
+      'scrollbar-width:none;-webkit-appearance:none;border-radius:0;}',
       '.hr-editor-wrap > #editor::-webkit-scrollbar{display:none;}',
       '.hr-editor-wrap > #editor::selection{background:rgba(76,141,255,0.30);}',
-      '.hr-hl{position:absolute;left:0;top:0;width:100%;height:100%;margin:0;padding:12px;',
-      'border:0;overflow:hidden;pointer-events:none;white-space:pre-wrap;',
-      'overflow-wrap:break-word;word-break:normal;font-size:16px;line-height:1.5;tab-size:2;',
-      'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#e6edf3;}',
+      '.hr-hl{position:absolute;left:0;top:0;width:100%;height:100%;margin:0;',
+      'border:0;overflow:hidden;pointer-events:none;',
+      'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;',
+      'font-size:16px;line-height:24px;padding:12px;tab-size:2;color:#e6edf3;}',
       '.hr-composing > #editor{color:#e6edf3;}',
       '.hr-composing .hr-hl{visibility:hidden;}',
       '.hr-plain > #editor{color:#e6edf3;}',
@@ -73,18 +76,99 @@
     codeEl = document.createElement('code');
     pre.appendChild(codeEl);
 
-    // 高亮层先进，textarea 后进 —— 后者叠在上面
     wrap.appendChild(pre);
 
     area.insertBefore(wrap, editor);
     wrap.appendChild(editor);
 
-    // textarea 被隐藏（切到二进制文件）时，整个包装层跟着隐藏
     var obs = new MutationObserver(function () {
       wrap.hidden = !!editor.hidden;
     });
     obs.observe(editor, { attributes: true, attributeFilter: ['hidden'] });
     wrap.hidden = !!editor.hidden;
+  }
+
+  /* ================= 度量校准 ================= */
+  var METRIC_PROPS = [
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'fontStretch',
+    'letterSpacing', 'wordSpacing', 'tabSize', 'textIndent', 'textTransform',
+    'whiteSpace', 'overflowWrap', 'wordBreak', 'textAlign',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'boxSizing'
+  ];
+
+  function measureLineHeight(cs) {
+    var probe = document.createElement('textarea');
+    probe.style.position = 'absolute';
+    probe.style.left = '-9999px';
+    probe.style.top = '0';
+    probe.style.width = '200px';
+    probe.style.height = '200px';
+    probe.style.overflow = 'hidden';
+    probe.style.resize = 'none';
+
+    for (var i = 0; i < METRIC_PROPS.length; i++) {
+      var p = METRIC_PROPS[i];
+      if (cs[p]) probe.style[p] = cs[p];
+    }
+
+    probe.value = 'x\nx\nx\nx\nx\nx\nx\nx\nx\nx';
+
+    document.body.appendChild(probe);
+
+    var pcs = getComputedStyle(probe);
+    var padTop = parseFloat(pcs.paddingTop) || 0;
+    var padBottom = parseFloat(pcs.paddingBottom) || 0;
+    var inner = probe.scrollHeight - padTop - padBottom;
+
+    document.body.removeChild(probe);
+
+    return inner > 0 ? inner / 10 : 0;
+  }
+
+  function calibrate() {
+    if (!pre || !editor) return;
+
+    var cs = getComputedStyle(editor);
+    var i;
+
+    // 1) 把 textarea 的所有文本布局属性原样拷到高亮层
+    for (i = 0; i < METRIC_PROPS.length; i++) {
+      var p = METRIC_PROPS[i];
+      if (cs[p]) pre.style[p] = cs[p];
+    }
+
+    // 2) 用同款字体的探针量出真实行高，两边都写死成像素值
+    var lh = measureLineHeight(cs);
+    if (lh > 0) {
+      var px = Math.round(lh * 100) / 100 + 'px';
+      pre.style.lineHeight = px;
+      editor.style.lineHeight = px;
+    }
+
+    syncScroll();
+  }
+
+  /* ================= 滚动同步 ================= */
+  function syncScroll() {
+    if (!pre || pre.hidden) return;
+    if (pre.scrollTop !== editor.scrollTop) pre.scrollTop = editor.scrollTop;
+    if (pre.scrollLeft !== editor.scrollLeft) pre.scrollLeft = editor.scrollLeft;
+  }
+
+  function startScrollLoop() {
+    if (syncRaf) return;
+    var tick = function () {
+      syncScroll();
+      syncRaf = requestAnimationFrame(tick);
+    };
+    syncRaf = requestAnimationFrame(tick);
+  }
+
+  function stopScrollLoop() {
+    if (syncRaf) cancelAnimationFrame(syncRaf);
+    syncRaf = 0;
   }
 
   /* ================= 高亮 ================= */
@@ -139,11 +223,9 @@
       else if (g.punct) cls = 'tok-punct';
       else if (g.value) cls = 'tok-value';
 
-      if (cls) {
-        out += '<span class="' + cls + '">' + escapeHtml(m[0]) + '</span>';
-      } else {
-        out += escapeHtml(m[0]);
-      }
+      out += cls
+        ? '<span class="' + cls + '">' + escapeHtml(m[0]) + '</span>'
+        : escapeHtml(m[0]);
 
       last = re.lastIndex;
       if (m[0].length === 0) re.lastIndex++;
@@ -159,7 +241,7 @@
     var text = editor.value || '';
     var lang = languageOf(currentPath());
 
-    if (text.length > MAX_HIGHLIGHT || lang === 'plain') {
+    if (!highlightEnabled || text.length > MAX_HIGHLIGHT || lang === 'plain') {
       wrap.classList.add('hr-plain');
       pre.hidden = true;
       return;
@@ -168,8 +250,7 @@
     wrap.classList.remove('hr-plain');
     pre.hidden = false;
     codeEl.innerHTML = highlightToHtml(text, lang) + '\n';
-    pre.scrollTop = editor.scrollTop;
-    pre.scrollLeft = editor.scrollLeft;
+    syncScroll();
   }
 
   function scheduleHighlight() {
@@ -177,7 +258,6 @@
     highlightTimer = setTimeout(syncHighlight, HIGHLIGHT_DELAY);
   }
 
-  /* 拦截 app.js 对 editor.value 的赋值，切文件时也能刷新高亮 */
   function hookValue() {
     var proto = window.HTMLTextAreaElement && HTMLTextAreaElement.prototype;
     if (!proto) return;
@@ -210,14 +290,30 @@
     if (y < top || y > top + h - lh * 2) {
       editor.scrollTop = Math.max(0, y - h / 3);
     }
-    if (pre && !pre.hidden) pre.scrollTop = editor.scrollTop;
+    syncScroll();
+  }
+
+  /* ================= 提示 ================= */
+  function toast(message) {
+    var el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () {
+      el.classList.remove('show');
+    }, 1600);
   }
 
   /* ================= 事件 ================= */
   function bindEvents() {
+    editor.addEventListener('focus', startScrollLoop);
+    editor.addEventListener('blur', stopScrollLoop);
+
     editor.addEventListener('input', function (e) {
       if (e.isComposing || composing) return;
       scheduleHighlight();
+      syncScroll();
     });
 
     editor.addEventListener('compositionstart', function () {
@@ -231,14 +327,8 @@
       scheduleHighlight();
     });
 
-    editor.addEventListener('scroll', function () {
-      if (pre && !pre.hidden) {
-        pre.scrollTop = editor.scrollTop;
-        pre.scrollLeft = editor.scrollLeft;
-      }
-    });
+    editor.addEventListener('scroll', syncScroll);
 
-    // 回车自动缩进
     editor.addEventListener('keydown', function (e) {
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key !== 'Enter') return;
@@ -277,6 +367,18 @@
       syncHighlight();
       revealCaret();
     });
+
+    window.addEventListener('resize', function () {
+      calibrate();
+      scheduleHighlight();
+    });
+
+    window.addEventListener('orientationchange', function () {
+      setTimeout(function () {
+        calibrate();
+        scheduleHighlight();
+      }, 200);
+    });
   }
 
   /* ================= 查找替换 ================= */
@@ -300,11 +402,7 @@
 
   function updateCount() {
     if (!countEl) return;
-    if (!matches.length) {
-      countEl.textContent = '0/0';
-    } else {
-      countEl.textContent = (matchIndex + 1) + '/' + matches.length;
-    }
+    countEl.textContent = matches.length ? (matchIndex + 1) + '/' + matches.length : '0/0';
   }
 
   function refreshMatches() {
@@ -356,7 +454,10 @@
     var text = editor.value;
 
     editor.value = text.slice(0, start) + replaceInput.value + text.slice(start + len);
-    editor.setSelectionRange(start + replaceInput.value.length, start + replaceInput.value.length);
+    editor.setSelectionRange(
+      start + replaceInput.value.length,
+      start + replaceInput.value.length
+    );
     editor.dispatchEvent(new Event('input', { bubbles: true }));
     refreshMatches();
     syncHighlight();
@@ -437,10 +538,8 @@
   function openFind() {
     if (!findBar) buildFindBar();
     findBar.hidden = false;
-
     var sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
     if (sel && sel.indexOf('\n') === -1) findInput.value = sel;
-
     refreshMatches();
     findInput.focus();
   }
@@ -458,8 +557,33 @@
     btn.className = 'addfile';
     btn.id = 'hrFindBtn';
     btn.textContent = '找';
-    btn.setAttribute('aria-label', '查找替换');
+    btn.setAttribute('aria-label', '查找替换（长按开关高亮）');
+
+    var longPressed = false;
+    var pressTimer = null;
+
+    btn.addEventListener('touchstart', function () {
+      pressTimer = setTimeout(function () {
+        pressTimer = null;
+        longPressed = true;
+        toggleHighlight();
+      }, 650);
+    }, { passive: true });
+
+    ['touchend', 'touchmove', 'touchcancel'].forEach(function (ev) {
+      btn.addEventListener(ev, function () {
+        if (pressTimer) {
+          clearTimeout(pressTimer);
+          pressTimer = null;
+        }
+      }, { passive: true });
+    });
+
     btn.addEventListener('click', function () {
+      if (longPressed) {
+        longPressed = false;
+        return;
+      }
       if (findBar && !findBar.hidden) closeFind();
       else openFind();
     });
@@ -469,13 +593,21 @@
     else tabbar.appendChild(btn);
   }
 
+  function toggleHighlight() {
+    highlightEnabled = !highlightEnabled;
+    syncHighlight();
+    toast(highlightEnabled ? '语法高亮已开启' : '语法高亮已关闭');
+  }
+
   function init() {
     injectStyle();
     buildDom();
+    calibrate();
     hookValue();
     bindEvents();
     addFindButton();
     syncHighlight();
+    setTimeout(calibrate, 300);
   }
 
   if (document.readyState === 'loading') {
