@@ -690,3 +690,11 @@ button { font-family: inherit; }
   text-align: center;
   line-height: 1.7;
 }
+/* 高亮层：让 <code> 继承 <pre> 的字体，否则 iOS 会退回 Courier */
+.hr-hl code {
+  font: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+  tab-size: inherit;
+  white-space: inherit;
+}
