@@ -1,6 +1,5 @@
 /* ============================================================
    编辑器增强（独立挂载）：语法高亮 + 自动缩进 + 查找替换
-   不修改 app.js
    ============================================================ */
 
 (function () {
@@ -34,6 +33,8 @@
       'border:0;overflow:hidden;pointer-events:none;',
       'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;',
       'font-size:16px;line-height:24px;padding:12px;tab-size:2;color:#e6edf3;}',
+      '.hr-hl code{font:inherit;letter-spacing:inherit;word-spacing:inherit;',
+      'tab-size:inherit;white-space:inherit;}',
       '.hr-composing > #editor{color:#e6edf3;}',
       '.hr-composing .hr-hl{visibility:hidden;}',
       '.hr-plain > #editor{color:#e6edf3;}',
@@ -47,6 +48,8 @@
       '.tok-prop{color:#82aaff;}',
       '.tok-punct{color:#6d7a8a;}',
       '.tok-value{color:#89ddff;}',
+      'mark.hr-mark{background:rgba(240,180,41,0.38);color:inherit;',
+      'border-radius:2px;box-shadow:0 0 0 1px rgba(240,180,41,0.5);}',
       '.hr-find{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px 10px;',
       'background:#0e131b;border-bottom:1px solid #232a36;}',
       '.hr-find-row{display:flex;align-items:center;gap:6px;}',
@@ -57,7 +60,8 @@
       'color:#e6edf3;font-size:13px;padding:6px 10px;border-radius:7px;',
       'touch-action:manipulation;}',
       '.hr-find button:active{background:#222a38;}',
-      '.hr-find-count{font-size:11px;color:#8b98a9;min-width:46px;text-align:center;}'
+      '.hr-find-count{font-size:11px;color:#8b98a9;min-width:74px;text-align:center;',
+      'white-space:nowrap;}'
     ].join('\n');
 
     var el = document.createElement('style');
@@ -133,13 +137,11 @@
     var cs = getComputedStyle(editor);
     var i;
 
-    // 1) 把 textarea 的所有文本布局属性原样拷到高亮层
     for (i = 0; i < METRIC_PROPS.length; i++) {
       var p = METRIC_PROPS[i];
       if (cs[p]) pre.style[p] = cs[p];
     }
 
-    // 2) 用同款字体的探针量出真实行高，两边都写死成像素值
     var lh = measureLineHeight(cs);
     if (lh > 0) {
       var px = Math.round(lh * 100) / 100 + 'px';
@@ -150,7 +152,7 @@
     syncScroll();
   }
 
-  /* ================= 滚动同步 ================= */
+  /* ================= 滚动 ================= */
   function syncScroll() {
     if (!pre || pre.hidden) return;
     if (pre.scrollTop !== editor.scrollTop) pre.scrollTop = editor.scrollTop;
@@ -277,32 +279,100 @@
     });
   }
 
-  /* ================= 光标定位 ================= */
-  function revealCaret() {
-    var pos = editor.selectionStart;
-    var before = editor.value.slice(0, pos);
-    var lineIndex = before.split('\n').length - 1;
-    var lh = parseFloat(getComputedStyle(editor).lineHeight) || 24;
-    var y = lineIndex * lh;
-    var top = editor.scrollTop;
-    var h = editor.clientHeight;
+  /* ================= 精确位置测量 ================= */
+  function locate(offset) {
+    if (!pre) return null;
 
-    if (y < top || y > top + h - lh * 2) {
+    var walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT, null);
+    var acc = 0;
+    var node;
+
+    while ((node = walker.nextNode())) {
+      var len = node.nodeValue ? node.nodeValue.length : 0;
+      if (acc + len >= offset) {
+        return { node: node, offset: Math.max(0, offset - acc) };
+      }
+      acc += len;
+    }
+    return null;
+  }
+
+  /** 把某个字符偏移滚到可视区（center=true 时居中到 1/3 处） */
+  function revealOffset(offset, center) {
+    var y = null;
+
+    if (pre && !pre.hidden) {
+      var pos = locate(offset);
+      if (pos) {
+        var range = document.createRange();
+        range.setStart(pos.node, pos.offset);
+        range.setEnd(pos.node, pos.offset);
+
+        var rect = range.getBoundingClientRect();
+        var preRect = pre.getBoundingClientRect();
+
+        if (rect && (rect.height || rect.top)) {
+          y = rect.top - preRect.top + editor.scrollTop;
+        }
+      }
+    }
+
+    if (y === null) {
+      var before = editor.value.slice(0, offset);
+      var lineIndex = before.split('\n').length - 1;
+      var lh = parseFloat(getComputedStyle(editor).lineHeight) || 24;
+      y = lineIndex * lh;
+    }
+
+    var h = editor.clientHeight;
+    var top = editor.scrollTop;
+
+    if (center) {
+      editor.scrollTop = Math.max(0, y - h / 3);
+    } else if (y < top + 8 || y > top + h - 48) {
       editor.scrollTop = Math.max(0, y - h / 3);
     }
+
     syncScroll();
   }
 
-  /* ================= 提示 ================= */
-  function toast(message) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = message;
-    el.classList.add('show');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(function () {
-      el.classList.remove('show');
-    }, 1600);
+  function revealCaret() {
+    revealOffset(editor.selectionStart, false);
+  }
+
+  /* ================= 命中标记 ================= */
+  function clearMarks() {
+    if (!pre) return;
+    var marks = pre.querySelectorAll('mark.hr-mark');
+    for (var i = 0; i < marks.length; i++) {
+      var mark = marks[i];
+      var parent = mark.parentNode;
+      if (!parent) continue;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+    }
+    if (pre.normalize) pre.normalize();
+  }
+
+  function markMatch(start, end) {
+    if (!pre || pre.hidden) return;
+    clearMarks();
+
+    var a = locate(start);
+    var b = locate(end);
+    if (!a || !b) return;
+
+    var range = document.createRange();
+    range.setStart(a.node, a.offset);
+    range.setEnd(b.node, b.offset);
+
+    try {
+      var frag = range.extractContents();
+      var mark = document.createElement('mark');
+      mark.className = 'hr-mark';
+      mark.appendChild(frag);
+      range.insertNode(mark);
+    } catch (e) {}
   }
 
   /* ================= 事件 ================= */
@@ -393,19 +463,41 @@
     var b = document.createElement('button');
     b.type = 'button';
     b.textContent = label;
+
+    // 防止点按钮时把焦点从输入框抢走（否则键盘会收起）
+    b.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+    });
     b.addEventListener('click', function (e) {
       e.preventDefault();
+      e.stopPropagation();
       handler();
     });
     return b;
   }
 
+  function lineAt(offset) {
+    var head = editor.value.slice(0, offset);
+    var count = 1;
+    for (var i = 0; i < head.length; i++) {
+      if (head.charCodeAt(i) === 10) count++;
+    }
+    return count;
+  }
+
   function updateCount() {
     if (!countEl) return;
-    countEl.textContent = matches.length ? (matchIndex + 1) + '/' + matches.length : '0/0';
+    if (!matches.length) {
+      countEl.textContent = '0/0';
+      return;
+    }
+    countEl.textContent =
+      (matchIndex + 1) + '/' + matches.length + ' · L' + lineAt(matches[matchIndex]);
   }
 
   function refreshMatches() {
+    clearMarks();
+
     matches = [];
     matchIndex = -1;
 
@@ -436,32 +528,41 @@
     updateCount();
   }
 
+  /** 跳到当前位置：不抢焦点、不设选区，只滚动 + 高亮 */
   function step(dir) {
     if (!matches.length) return;
-    var len = findInput.value.length || 1;
+
     matchIndex = (matchIndex + dir + matches.length) % matches.length;
     var start = matches[matchIndex];
-    editor.focus();
-    editor.setSelectionRange(start, start + len);
-    revealCaret();
+    var len = findInput.value.length || 1;
+
+    syncHighlight();
+    revealOffset(start, true);
+    markMatch(start, start + len);
     updateCount();
   }
 
   function replaceOne() {
     if (!matches.length) return;
+
     var len = findInput.value.length;
     var start = matches[matchIndex];
     var text = editor.value;
+    var rep = replaceInput.value;
 
-    editor.value = text.slice(0, start) + replaceInput.value + text.slice(start + len);
-    editor.setSelectionRange(
-      start + replaceInput.value.length,
-      start + replaceInput.value.length
-    );
+    editor.value = text.slice(0, start) + rep + text.slice(start + len);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
+
     refreshMatches();
     syncHighlight();
-    revealCaret();
+
+    if (matches.length) {
+      if (matchIndex >= matches.length) matchIndex = 0;
+      var s = matches[matchIndex];
+      revealOffset(s, true);
+      markMatch(s, s + (findInput.value.length || 1));
+      updateCount();
+    }
   }
 
   function replaceAll() {
@@ -476,6 +577,7 @@
     });
 
     if (after === before) return;
+
     editor.value = after;
     editor.dispatchEvent(new Event('input', { bubbles: true }));
     refreshMatches();
@@ -538,14 +640,17 @@
   function openFind() {
     if (!findBar) buildFindBar();
     findBar.hidden = false;
+
     var sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
     if (sel && sel.indexOf('\n') === -1) findInput.value = sel;
+
     refreshMatches();
     findInput.focus();
   }
 
   function closeFind() {
     if (findBar) findBar.hidden = true;
+    clearMarks();
   }
 
   /* ================= 挂载 ================= */
@@ -596,7 +701,15 @@
   function toggleHighlight() {
     highlightEnabled = !highlightEnabled;
     syncHighlight();
-    toast(highlightEnabled ? '语法高亮已开启' : '语法高亮已关闭');
+    var el = document.getElementById('toast');
+    if (el) {
+      el.textContent = highlightEnabled ? '语法高亮已开启' : '语法高亮已关闭';
+      el.classList.add('show');
+      clearTimeout(toggleHighlight._t);
+      toggleHighlight._t = setTimeout(function () {
+        el.classList.remove('show');
+      }, 1600);
+    }
   }
 
   function init() {
