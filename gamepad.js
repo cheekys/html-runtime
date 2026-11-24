@@ -1,13 +1,12 @@
 /* ============================================================
-   虚拟手柄（独立挂载，不修改 app.js）
-   在游戏模式下向 iframe 派发键盘事件
+   虚拟手柄 / 虚拟摇杆（独立挂载，不修改 app.js）
    ============================================================ */
 
 (function () {
   'use strict';
 
-  var STORE_ON = 'html-runtime:pad-on';
-  var STORE_PRESET = 'html-runtime:pad-preset';
+  var PREF_ON = 'html-runtime:pad-on:';
+  var PREF_PRESET = 'html-runtime:pad-preset';
 
   var pane = document.getElementById('previewPane');
   if (!pane) return;
@@ -17,9 +16,9 @@
   var enabled = false;
   var presetIndex = 0;
   var activeDefs = [];
-  var presetLabelEl = null;
+  var wasImmersive = false;
 
-  /* ================= 键位预设 ================= */
+  /* ================= 预设 ================= */
   function arrows() {
     return {
       up: { code: 'ArrowUp', key: 'ArrowUp', keyCode: 38 },
@@ -29,31 +28,51 @@
     };
   }
 
+  function wasd() {
+    return {
+      up: { code: 'KeyW', key: 'w', keyCode: 87 },
+      down: { code: 'KeyS', key: 's', keyCode: 83 },
+      left: { code: 'KeyA', key: 'a', keyCode: 65 },
+      right: { code: 'KeyD', key: 'd', keyCode: 68 }
+    };
+  }
+
+  var SPACE = { code: 'Space', key: ' ', keyCode: 32 };
+  var ENTER = { code: 'Enter', key: 'Enter', keyCode: 13 };
+  var KEY_J = { code: 'KeyJ', key: 'j', keyCode: 74 };
+  var KEY_K = { code: 'KeyK', key: 'k', keyCode: 75 };
+
   var PRESETS = [
-    {
-      short: '方向键',
-      dir: arrows(),
-      a: { code: 'Space', key: ' ', keyCode: 32 },
-      b: { code: 'Enter', key: 'Enter', keyCode: 13 }
-    },
-    {
-      short: 'WASD',
-      dir: {
-        up: { code: 'KeyW', key: 'w', keyCode: 87 },
-        down: { code: 'KeyS', key: 's', keyCode: 83 },
-        left: { code: 'KeyA', key: 'a', keyCode: 65 },
-        right: { code: 'KeyD', key: 'd', keyCode: 68 }
-      },
-      a: { code: 'KeyJ', key: 'j', keyCode: 74 },
-      b: { code: 'KeyK', key: 'k', keyCode: 75 }
-    },
-    {
-      short: '方向键 ZX',
-      dir: arrows(),
-      a: { code: 'KeyZ', key: 'z', keyCode: 90 },
-      b: { code: 'KeyX', key: 'x', keyCode: 88 }
-    }
+    { mode: 'dpad', short: '十字·方向', dir: arrows(), a: SPACE, b: ENTER },
+    { mode: 'stick', short: '摇杆·方向', dir: arrows(), a: SPACE, b: ENTER },
+    { mode: 'dpad', short: '十字·WASD', dir: wasd(), a: KEY_J, b: KEY_K },
+    { mode: 'stick', short: '摇杆·WASD', dir: wasd(), a: KEY_J, b: KEY_K }
   ];
+
+  /* ================= 偏好：按项目记忆 ================= */
+  function projectId() {
+    try {
+      return localStorage.getItem('html-runtime:last-project') || 'default';
+    } catch (e) {
+      return 'default';
+    }
+  }
+
+  function loadPref() {
+    try {
+      enabled = localStorage.getItem(PREF_ON + projectId()) === '1';
+      var saved = parseInt(localStorage.getItem(PREF_PRESET) || '0', 10);
+      if (!isNaN(saved) && saved >= 0 && saved < PRESETS.length) presetIndex = saved;
+    } catch (e) {
+      enabled = false;
+    }
+  }
+
+  function savePref() {
+    try {
+      localStorage.setItem(PREF_ON + projectId(), enabled ? '1' : '0');
+    } catch (e) {}
+  }
 
   /* ================= 样式 ================= */
   function injectStyle() {
@@ -63,6 +82,7 @@
       'display:flex;align-items:flex-end;justify-content:space-between;',
       'pointer-events:none;user-select:none;-webkit-user-select:none;',
       '-webkit-touch-callout:none;}',
+      '.gp-left-zone{pointer-events:none;display:flex;align-items:flex-end;}',
       '.gp-pad{display:grid;grid-template-columns:repeat(3,48px);',
       'grid-template-rows:repeat(3,48px);gap:5px;pointer-events:none;}',
       '.gp-up{grid-area:1/2;}',
@@ -80,21 +100,27 @@
       'border-color:rgba(255,255,255,0.6);transform:scale(0.95);}',
       '.gp-a,.gp-b{width:58px;height:58px;border-radius:50%;',
       'font-size:16px;font-weight:600;}',
+      '.gp-stick{position:relative;width:116px;height:116px;border-radius:50%;',
+      'border:2px solid rgba(255,255,255,0.2);background:rgba(18,24,34,0.32);',
+      'backdrop-filter:blur(6px);pointer-events:auto;touch-action:none;',
+      'display:flex;align-items:center;justify-content:center;}',
+      '.gp-stick-knob{width:50px;height:50px;border-radius:50%;',
+      'background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.38);',
+      'pointer-events:none;transition:transform 0.04s linear;}',
       '.gp-preset{position:absolute;left:50%;transform:translateX(-50%);',
       'bottom:calc(env(safe-area-inset-bottom,0px) + 20px);pointer-events:auto;',
       'appearance:none;border:1px solid rgba(255,255,255,0.2);',
-      'background:rgba(18,24,34,0.45);color:rgba(255,255,255,0.7);',
+      'background:rgba(18,24,34,0.5);color:rgba(255,255,255,0.75);',
       'font-size:11px;padding:5px 12px;border-radius:999px;',
       'backdrop-filter:blur(6px);touch-action:manipulation;white-space:nowrap;}',
       '.gp-preset:active{background:rgba(76,141,255,0.6);color:#fff;}',
       '.gp-toggle{position:absolute;top:calc(env(safe-area-inset-top,0px) + 8px);',
-      'right:44px;z-index:10;width:28px;height:28px;border-radius:50%;border:0;',
-      'background:rgba(0,0,0,0.22);color:rgba(255,255,255,0.45);font-size:12px;',
-      'line-height:1;touch-action:manipulation;',
+      'right:44px;z-index:10;height:28px;padding:0 11px;border-radius:14px;border:0;',
+      'background:rgba(0,0,0,0.3);color:rgba(255,255,255,0.55);font-size:11px;',
+      'line-height:28px;touch-action:manipulation;white-space:nowrap;',
       '-webkit-tap-highlight-color:transparent;}',
-      '.gp-toggle[data-on="1"]{background:rgba(76,141,255,0.45);',
-      'color:rgba(255,255,255,0.9);}',
-      '.gp-toggle:active{background:rgba(0,0,0,0.5);color:#fff;}'
+      '.gp-toggle[data-on="1"]{background:rgba(76,141,255,0.55);color:#fff;}',
+      '.gp-toggle:active{background:rgba(0,0,0,0.55);color:#fff;}'
     ].join('\n');
 
     var el = document.createElement('style');
@@ -102,7 +128,7 @@
     document.head.appendChild(el);
   }
 
-  /* ================= 派发键盘事件 ================= */
+  /* ================= 键盘事件 ================= */
   function dispatchKey(type, def) {
     var iframe = document.querySelector('#frameHost iframe');
     if (!iframe) return;
@@ -133,15 +159,9 @@
     }
 
     try {
-      Object.defineProperty(event, 'keyCode', {
-        get: function () { return def.keyCode; }
-      });
-      Object.defineProperty(event, 'which', {
-        get: function () { return def.keyCode; }
-      });
-      Object.defineProperty(event, 'charCode', {
-        get: function () { return 0; }
-      });
+      Object.defineProperty(event, 'keyCode', { get: function () { return def.keyCode; } });
+      Object.defineProperty(event, 'which', { get: function () { return def.keyCode; } });
+      Object.defineProperty(event, 'charCode', { get: function () { return 0; } });
     } catch (e) {}
 
     target.dispatchEvent(event);
@@ -161,12 +181,35 @@
 
   function releaseAll() {
     for (var i = 0; i < activeDefs.length; i++) {
-      var def = activeDefs[i];
-      if (def.down) {
-        def.down = false;
-        dispatchKey('keyup', def);
+      if (activeDefs[i].down) {
+        activeDefs[i].down = false;
+        dispatchKey('keyup', activeDefs[i]);
       }
     }
+  }
+
+  function applyDir(preset, keys) {
+    var names = ['up', 'down', 'left', 'right'];
+    for (var i = 0; i < names.length; i++) {
+      var def = preset.dir[names[i]];
+      if (keys[names[i]]) press(def);
+      else releaseKey(def);
+    }
+  }
+
+  /** 给自写游戏用的模拟量 */
+  function pushStick(nx, ny) {
+    var iframe = document.querySelector('#frameHost iframe');
+    if (!iframe) return;
+    try {
+      var win = iframe.contentWindow;
+      if (!win) return;
+      win.__HR_STICK__ = {
+        x: Math.round(nx * 100) / 100,
+        y: Math.round(ny * 100) / 100,
+        active: !(nx === 0 && ny === 0)
+      };
+    } catch (e) {}
   }
 
   /* ================= 按键 ================= */
@@ -177,15 +220,15 @@
     btn.textContent = label;
     btn.setAttribute('aria-label', label);
 
+    if (activeDefs.indexOf(def) === -1) activeDefs.push(def);
+
     var pointerId = null;
 
     btn.addEventListener('pointerdown', function (e) {
       e.preventDefault();
       e.stopPropagation();
       pointerId = e.pointerId;
-      try {
-        btn.setPointerCapture(e.pointerId);
-      } catch (err) {}
+      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
       btn.classList.add('gp-active');
       press(def);
     });
@@ -202,25 +245,108 @@
     btn.addEventListener('pointercancel', up);
     btn.addEventListener('lostpointercapture', up);
 
-    activeDefs.push(def);
     return btn;
   }
 
-  /* ================= 构建 ================= */
-  function buildPad() {
-    if (!root) return;
-
-    activeDefs = [];
-    root.textContent = '';
-
-    var preset = PRESETS[presetIndex];
-
+  function buildDpad(preset) {
     var pad = document.createElement('div');
     pad.className = 'gp-pad';
     pad.appendChild(makeKey('▲', preset.dir.up, 'gp-up'));
     pad.appendChild(makeKey('◀', preset.dir.left, 'gp-left'));
     pad.appendChild(makeKey('▶', preset.dir.right, 'gp-right'));
     pad.appendChild(makeKey('▼', preset.dir.down, 'gp-down'));
+    return pad;
+  }
+
+  function buildStick(preset) {
+    var base = document.createElement('div');
+    base.className = 'gp-stick';
+
+    var knob = document.createElement('div');
+    knob.className = 'gp-stick-knob';
+    base.appendChild(knob);
+
+    var names = ['up', 'down', 'left', 'right'];
+    for (var i = 0; i < names.length; i++) {
+      var def = preset.dir[names[i]];
+      if (activeDefs.indexOf(def) === -1) activeDefs.push(def);
+    }
+
+    var pointerId = null;
+    var centerX = 0;
+    var centerY = 0;
+    var maxDist = 1;
+
+    function onMove(e) {
+      if (pointerId === null || e.pointerId !== pointerId) return;
+      e.preventDefault();
+
+      var dx = e.clientX - centerX;
+      var dy = e.clientY - centerY;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > maxDist) {
+        dx = dx / dist * maxDist;
+        dy = dy / dist * maxDist;
+      }
+
+      knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+
+      var nx = dx / maxDist;
+      var ny = dy / maxDist;
+      var t = 0.36;
+
+      applyDir(preset, {
+        up: ny < -t,
+        down: ny > t,
+        left: nx < -t,
+        right: nx > t
+      });
+      pushStick(nx, ny);
+    }
+
+    function onUp(e) {
+      if (pointerId === null) return;
+      if (e && e.pointerId !== undefined && e.pointerId !== pointerId) return;
+      pointerId = null;
+      knob.style.transform = 'translate(0px,0px)';
+      applyDir(preset, { up: false, down: false, left: false, right: false });
+      pushStick(0, 0);
+    }
+
+    base.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var rect = base.getBoundingClientRect();
+      centerX = rect.left + rect.width / 2;
+      centerY = rect.top + rect.height / 2;
+      maxDist = rect.width * 0.31;
+      pointerId = e.pointerId;
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      onMove(e);
+    });
+
+    base.addEventListener('pointermove', onMove);
+    base.addEventListener('pointerup', onUp);
+    base.addEventListener('pointercancel', onUp);
+    base.addEventListener('lostpointercapture', onUp);
+
+    return base;
+  }
+
+  /* ================= 构建 ================= */
+  function buildPad() {
+    if (!root) return;
+
+    releaseAll();
+    activeDefs = [];
+    root.textContent = '';
+
+    var preset = PRESETS[presetIndex];
+
+    var left = document.createElement('div');
+    left.className = 'gp-left-zone';
+    left.appendChild(preset.mode === 'stick' ? buildStick(preset) : buildDpad(preset));
 
     var actions = document.createElement('div');
     actions.className = 'gp-actions';
@@ -231,60 +357,59 @@
     presetBtn.type = 'button';
     presetBtn.className = 'gp-preset';
     presetBtn.textContent = preset.short;
+    presetBtn.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+    });
     presetBtn.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
       releaseAll();
+      applyDir(preset, { up: false, down: false, left: false, right: false });
       presetIndex = (presetIndex + 1) % PRESETS.length;
       try {
-        localStorage.setItem(STORE_PRESET, String(presetIndex));
+        localStorage.setItem(PREF_PRESET, String(presetIndex));
       } catch (err) {}
       buildPad();
       updateVisibility();
     });
 
-    root.appendChild(pad);
+    root.appendChild(left);
     root.appendChild(actions);
     root.appendChild(presetBtn);
-    presetLabelEl = presetBtn;
   }
 
   /* ================= 显示逻辑 ================= */
-  function isImmersive() {
-    return pane.classList.contains('immersive');
+  function updateToggleLabel() {
+    if (!toggleBtn) return;
+    toggleBtn.textContent = enabled ? '手柄 开' : '手柄 关';
+    toggleBtn.setAttribute('data-on', enabled ? '1' : '0');
   }
 
   function updateVisibility() {
-    if (!root) return;
+    var immersive = pane.classList.contains('immersive');
 
-    var immersive = isImmersive();
-    root.style.display = immersive && enabled ? 'flex' : 'none';
+    if (immersive && !wasImmersive) loadPref();
+    wasImmersive = immersive;
 
+    if (root) {
+      root.style.display = immersive && enabled ? 'flex' : 'none';
+    }
     if (toggleBtn) {
       toggleBtn.style.display = immersive ? 'block' : 'none';
-      toggleBtn.setAttribute('data-on', enabled ? '1' : '0');
+      updateToggleLabel();
     }
-
     if (!immersive || !enabled) releaseAll();
   }
 
   function toggle() {
     enabled = !enabled;
-    try {
-      localStorage.setItem(STORE_ON, enabled ? '1' : '0');
-    } catch (e) {}
+    savePref();
     updateVisibility();
   }
 
   /* ================= 初始化 ================= */
   function init() {
     injectStyle();
-
-    try {
-      enabled = localStorage.getItem(STORE_ON) === '1';
-      var saved = parseInt(localStorage.getItem(STORE_PRESET) || '0', 10);
-      if (!isNaN(saved) && saved >= 0 && saved < PRESETS.length) presetIndex = saved;
-    } catch (e) {}
 
     root = document.createElement('div');
     root.className = 'gp-root';
@@ -295,8 +420,6 @@
     toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
     toggleBtn.className = 'gp-toggle';
-    toggleBtn.textContent = '键';
-    toggleBtn.setAttribute('aria-label', '显示虚拟手柄');
     toggleBtn.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
